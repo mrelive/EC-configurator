@@ -22,12 +22,25 @@ export default class PresetsRepoIndexed {
     }
 
     loadIndex() {
-        return fetch(`${this._urlRaw}index.json`, { cache: "no-cache" })
-            .then((res) => res.json())
+        const indexUrl = `${this._urlRaw}index.json`;
+        console.log("[Presets] Loading index from", indexUrl);
+        return fetch(indexUrl, { cache: "no-cache" })
+            .then((res) => {
+                if (!res.ok) {
+                    throw new Error(`Failed fetching presets index (${res.status} ${res.statusText}) at ${indexUrl}`);
+                }
+                return res.json();
+            })
             .then((out) => {
+                // Preserve upstream descriptive terms; do not rewrite content here.
                 this._index = out;
                 this._settings = this._index.settings;
                 this._PresetParser = new PresetParser(this._index.settings);
+                console.log("[Presets] Index loaded. Presets count:", this._index.presets?.length || 0);
+            })
+            .catch((err) => {
+                console.error("[Presets] Failed to load index", indexUrl, err);
+                throw err;
             });
     }
 

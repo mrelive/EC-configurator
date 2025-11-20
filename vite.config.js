@@ -83,7 +83,8 @@ export default defineConfig({
             hook: "writeBundle",
         }),
         VitePWA({
-            registerType: "prompt",
+            registerType: "autoUpdate",
+            injectRegister: null,
             workbox: {
                 globPatterns: ["**/*.{js,css,html,ico,png,svg,json,mcm}"],
                 // 5MB
@@ -94,17 +95,22 @@ export default defineConfig({
                 name: pkg.displayName,
                 short_name: pkg.productName,
                 description: pkg.description,
-                theme_color: "#ffffff",
+                start_url: "/",
+                display: "standalone",
+                background_color: "#141920",
+                theme_color: "#141920",
                 icons: [
                     {
-                        src: "/images/pwa/pwa-192-192.png",
+                        src: "/images/ec-logo.svg",
                         sizes: "192x192",
-                        type: "image/png",
+                        type: "image/svg+xml",
+                        purpose: "any maskable",
                     },
                     {
-                        src: "/images/pwa/pwa-512-512.png",
+                        src: "/images/ec-logo.svg",
                         sizes: "512x512",
-                        type: "image/png",
+                        type: "image/svg+xml",
+                        purpose: "any maskable",
                     },
                 ],
             },

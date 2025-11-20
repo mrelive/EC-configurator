@@ -18,6 +18,7 @@ const VirtualFC = {
         virtualFC.CONFIG.flightControllerVersion = "2025.12.0";
         virtualFC.CONFIG.flightControllerIdentifier = "BTFL";
         virtualFC.CONFIG.apiVersion = CONFIGURATOR.virtualApiVersion;
+        virtualFC.CONFIG.boardType = 2; // Set to F4 board type to enable OSD in virtual mode
 
         virtualFC.CONFIG.cpuTemp = 48;
 
@@ -35,8 +36,9 @@ const VirtualFC = {
             "USE_TRANSPONDER",
         ];
 
-        virtualFC.CONFIG.craftName = "BetaFlight";
-        virtualFC.CONFIG.pilotName = "BF pilot";
+        // Rebranded default identifiers for virtual (disconnected) mode
+        virtualFC.CONFIG.craftName = "ECHO CORP";
+        virtualFC.CONFIG.pilotName = "EC operator";
 
         virtualFC.FEATURE_CONFIG.features = new Features(FC.CONFIG);
         virtualFC.FEATURE_CONFIG.features.setMask(0);

@@ -1,0 +1,14 @@
+PLACEHOLDER - EC ICON
+
+This file needs to be replaced with a proper PNG/ICO version of the EC logo.
+
+Source file: src/images/ec-logo.svg
+
+Please use an image converter tool (Inkscape, GIMP, or online converter) 
+to create the appropriate icon format from the EC logo SVG.
+
+Required formats:
+- bf_icon.ico (Windows icon - 16x16, 32x32, 48x48)
+- bf_icon.icns (Mac icon - multiple sizes)
+- bf_icon_128.png (128x128 PNG)
+- PWA icons (see LOGO_REPLACEMENT_STATUS.md)

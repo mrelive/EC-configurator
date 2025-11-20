@@ -1,5 +1,5 @@
 ; ------------------------------------------
-; Installer for Betaflight Configurator
+; Installer for EC EDITION FC CONFIGURATOR (rebranded fork)
 ; ------------------------------------------
 ; It receives from the command line with /D the parameters: 
 ; version
@@ -9,18 +9,18 @@
 ; sourceFolder
 ; targetFolder
 
-#define ApplicationName "Betaflight Configurator"
-#define CompanyName "The Betaflight open source project"
-#define CompanyUrl "https://betaflight.com/"
-#define ExecutableFileName "betaflight-configurator.exe"
-#define GroupName "Betaflight"
-#define InstallerFileName "betaflight-configurator_" + version + "_" + archName + "-installer"
-#define SourcePath "..\..\" + sourceFolder + "\betaflight-configurator\" + archName
-#define TargetFolderName "Betaflight-Configurator"
-#define UpdatesUrl "https://github.com/betaflight/betaflight-configurator/releases"
+#define ApplicationName "EC EDITION FC CONFIGURATOR"
+#define CompanyName "EC Edition Project"
+#define CompanyUrl "https://example.com/" ; placeholder URL
+#define ExecutableFileName "ec-edition-fc-configurator.exe"
+#define GroupName "EC Edition"
+#define InstallerFileName "ec-edition-fc-configurator_" + version + "_" + archName + "-installer"
+#define SourcePath "..\..\" + sourceFolder + "\ec-edition-fc-configurator" + archName
+#define TargetFolderName "EC-Edition-FC-Configurator"
+#define UpdatesUrl "https://github.com/mrelive/EC-configurator/releases"
 
 [CustomMessages]
-AppName=betaflight-configurator
+AppName=ec-edition-fc-configurator
 LaunchProgram=Start {#ApplicationName}
 
 [Files]
@@ -85,13 +85,10 @@ MinVersion=6.2
 OutputBaseFilename={#InstallerFileName}
 OutputDir=..\..\{#targetFolder}\
 PrivilegesRequiredOverridesAllowed=commandline dialog
-SetupIconFile=bf_installer_icon.ico
 ShowLanguageDialog=yes
 SolidCompression=yes
 UninstallDisplayIcon={app}\{#ExecutableFileName}
 UninstallDisplayName={#ApplicationName}
-WizardImageFile=bf_installer.bmp
-WizardSmallImageFile=bf_installer_small.bmp
 WizardStyle=modern
 
 [Code]

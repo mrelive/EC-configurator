@@ -1,5 +1,5 @@
 import { createApp } from "vue";
-import { BetaflightComponents } from "./vue_components.js";
+import { ECComponents } from "./vue_components.js";
 import I18NextVue from "i18next-vue";
 import i18next from "i18next";
 
@@ -42,7 +42,7 @@ export function loadContent(contentElement, htmlPath, callback) {
             const app = createApp({});
 
             // Add the components plugin
-            app.use(BetaflightComponents);
+            app.use(ECComponents);
             app.use(I18NextVue, { i18next });
 
             // Mount the app to this element and store the instance

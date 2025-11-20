@@ -14,7 +14,7 @@ import MSP from "../js/msp.js";
 import PortHandler from "../js/port_handler.js";
 import PortUsage from "../js/port_usage.js";
 import CONFIGURATOR from "../js/data_storage.js";
-import { BetaflightComponents } from "../js/vue_components.js";
+import { ECComponents } from "../js/vue_components.js";
 
 // Connection tracking object
 const CONNECTION = reactive({
@@ -31,7 +31,7 @@ const CONNECTION = reactive({
  need to be marked as reactive in it's own module, to detect
  changes in arrays so I added the `reactive` wrapper there too.
 */
-const betaflightModel = reactive({
+const ecModel = reactive({
     CONFIGURATOR,
     FC,
     MSP,
@@ -59,11 +59,11 @@ i18next.on("initialized", function () {
 
     const app = createApp({
         setup() {
-            return betaflightModel;
+            return ecModel;
         },
     });
 
-    app.use(I18NextVue, { i18next }).use(BetaflightComponents).mount("#main-wrapper");
+    app.use(I18NextVue, { i18next }).use(ECComponents).mount("#main-wrapper");
 
     if (process.env.NODE_ENV === "development") {
         console.log("Development mode enabled, installing Vue tools");
@@ -75,4 +75,4 @@ i18next.on("initialized", function () {
 // Not strictly necessary here, but if needed
 // it's always possible to modify this model in
 // jquery land to trigger updates in vue
-window.vm = betaflightModel;
+window.vm = ecModel;

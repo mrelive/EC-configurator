@@ -6,11 +6,22 @@
     <script type="module" src="/src/js/utils/common.js?v=${Date.now()}"></script>
     <script type="module" src="/src/js/browserMain.js?v=${Date.now()}"></script>
 
-    <title>Betaflight</title>
-    <meta name="description" content="Configuration and management tool for the Betaflight flight control firmware">
+    <title>EC EDITION FC CONFIGURATOR</title>
+    <meta name="description" content="Configuration and management tool for the EC Edition flight controller firmware (fork).">
     <link rel="icon" href="/images/pwa/favicon.ico">
     <link rel="apple-touch-icon" href="/images/pwa/apple-touch-icon.png" sizes="128x128">
-    <meta name="theme-color" content="#eea600">
+    <meta name="theme-color" content="#3f00b5">
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').then(registration => {
+            console.log('SW registered: ', registration);
+          }).catch(registrationError => {
+            console.log('SW registration failed: ', registrationError);
+          });
+        });
+      }
+    </script>
 </head>
 <body>
 <div id="main-wrapper">
@@ -20,12 +31,12 @@
         <div id="menu_btn">
             <em class="fas fa-bars"></em>
         </div>
-        <betaflight-logo
+        <ec-logo
             :configurator-version="CONFIGURATOR.getDisplayVersion()"
             :firmware-version="FC.CONFIG.flightControllerVersion"
             :firmware-id="FC.CONFIG.flightControllerIdentifier"
             :hardware-id="FC.CONFIG.hardwareName"
-        ></betaflight-logo>
+        ></ec-logo>
         <port-picker
             v-model="PortHandler.portPicker"
             :connected-bluetooth-devices="PortHandler.currentBluetoothPorts"
@@ -117,12 +128,12 @@
     </div>
     <div id="tab-content-container">
         <div class="tab_container">
-            <betaflight-logo
+            <ec-logo
                 :configurator-version="CONFIGURATOR.getDisplayVersion()"
                 :firmware-version="FC.CONFIG.flightControllerVersion"
                 :firmware-id="FC.CONFIG.flightControllerIdentifier"
                 :hardware-id="FC.CONFIG.hardwareName"
-            ></betaflight-logo>
+            ></ec-logo>
             <div id="tabs">
                 <ul class="mode-disconnected">
                     <li class="tab_landing" id="tab_landing"><a href="#" i18n="tabLanding" class="tabicon ic_welcome" i18n_title="tabLanding"></a></li>
@@ -189,7 +200,7 @@
             <div class="dialogConfiguratorUpdate-content" style="margin-top: 10px"></div>
         </div>
         <div class="buttons">
-            <a href="#" class="dialogConfiguratorUpdate-websitebtn regular-button" i18n="configuratorUpdateWebsite"></a>
+            <a href="https://ec-configurator.vercel.app/" target="_blank" class="dialogConfiguratorUpdate-websitebtn regular-button" i18n="configuratorUpdateWebsite"></a>
             <a href="#" class="dialogConfiguratorUpdate-closebtn regular-button" i18n="close"></a>
         </div>
     </dialog>

@@ -1,16 +1,30 @@
-body.dark-theme {
+/* EC Edition Cyberpunk Neon Dark Theme */
+body.dark-theme,
+body {
+    background: var(--surface-100);
+
     .helpicon {
         background-image: url(../images/icons/cf_icon_info_white.svg);
-        opacity: 0.3;
+        opacity: 0.5;
+        filter: drop-shadow(var(--glow-cyan));
+        transition: all 0.3s ease;
         &:hover {
-            opacity: 0.5;
+            opacity: 1;
+            filter: drop-shadow(var(--glow-cyan-strong));
         }
     }
+
     .gui_box_titlebar {
+        background: linear-gradient(135deg, var(--surface-300) 0%, var(--surface-400) 100%);
+        border-bottom: 2px solid var(--primary-500);
+        box-shadow: 0 2px 10px rgba(0, 230, 230, 0.2);
+
         .helpicon {
-            background-image: url(../images/icons/cf_icon_info_grey.svg);
+            background-image: url(../images/icons/cf_icon_info_white.svg);
+            filter: drop-shadow(0 0 3px rgba(0, 230, 230, 0.8));
         }
     }
+
     .tab-failsafe {
         .pro1 {
             background-image: url(../images/icons/cf_failsafe_procedure1-dark.svg);
@@ -22,16 +36,24 @@ body.dark-theme {
             background-image: url(../images/icons/cf_failsafe_procedure4-dark.svg);
         }
     }
+
     .tab-landing {
-        background-image: url(../../images/pattern_dark.png);
+        /* Remove large accent blobs for cleaner layout */
+        background: var(--surface-100);
+
         .logowrapper {
             img {
-                content: url(../images/bf_logo_black.svg);
+                filter: drop-shadow(var(--glow-cyan));
             }
         }
     }
 
     .invertable {
         filter: invert(1);
+    }
+
+    /* Removed grid overlay - cleaner look */
+    .background_paper::before {
+        display: none;
     }
 }

@@ -333,7 +333,7 @@
         "message": "When internet is available, the app should automatically ask for available updates."
     },
     "configuratorUpdateWebsite": {
-        "message": "Go to Release Website"
+        "message": "Go to App Website"
     },
     "rebootFlightController": {
         "message": "Rebooting flight controller, reconnect when ready"
@@ -755,28 +755,28 @@
         "message": "EEPROM <span class=\"message-positive\">saved</span>"
     },
     "defaultWelcomeIntro": {
-        "message": "Welcome to the <strong>Betaflight App</strong>, a utility designed to simplify updating, configuring and tuning of your flight controller."
+        "message": "Welcome to <strong>ECHO CORP FC Configurator</strong>, a professional-grade utility designed for advanced flight controller configuration and tuning."
     },
     "defaultWelcomeHead": {
-        "message": "Hardware"
+        "message": "Features"
     },
     "defaultWelcomeText": {
-        "message": "The application supports all hardware that can run Betaflight. Check flash tab for full list of hardware.<br /><br /> <a href=\"https://github.com/betaflight/blackbox-log-viewer/releases\" target=\"_blank\" rel=\"noopener noreferrer\">Download Betaflight Blackbox Log Viewer</a><br /><br /><a href=\"https://github.com/betaflight/betaflight-tx-lua-scripts/releases\" target=\"_blank\" rel=\"noopener noreferrer\">Download Betaflight TX Lua Scripts</a><br /><br />The firmware source code can be downloaded from <a href=\"https://github.com/betaflight/betaflight\" target=\"_blank\" rel=\"noopener noreferrer\">here</a><br /><br />For legacy hardware using a CP210x USB to serial chip:<br />The latest <b>CP210x Drivers</b> can be downloaded from <a href=\"https://www.silabs.com/products/development-tools/software/usb-to-uart-bridge-vcp-drivers\" target=\"_blank\" rel=\"noopener noreferrer\">here</a><br />The latest <b>Zadig</b> for Windows USB driver installation can be downloaded from <a href=\"http://zadig.akeo.ie/\" target=\"_blank\" rel=\"noopener noreferrer\">here</a><br /><b>ImpulseRC Driver Fixer</b> can be downloaded <a href=\"https://impulserc.com/pages/downloads\" target=\"blank\" rel=\"noopener noreferrer\">here</a>"
+        "message": "<strong>Cyberpunk Neon Interface</strong><br />Modern, professional dark theme with stunning visual effects<br /><br /><strong>Advanced Configuration</strong><br />Complete flight controller parameter tuning and optimization<br /><br /><strong>Real-time Monitoring</strong><br />Live sensor data visualization and system status indicators<br /><br /><strong>Firmware Management</strong><br />Comprehensive firmware flashing and backup capabilities<br /><br /><strong>Professional Tools</strong><br />CLI access, logging, motor testing, and complete diagnostics"
     },
     "defaultContributingHead": {
-        "message": "Contributing"
+        "message": "System Requirements"
     },
     "defaultContributingText": {
-        "message": "If you would like to help make Betaflight even better you can help in many ways, including:<br /><ul><li>using your knowledge of Betaflight to create or update content on <a href=\"https://betaflight.com/docs/wiki\" target=\"_blank\" rel=\"noopener noreferrer\">our Wiki</a>, or answering other users' questions in online forums;</li><li><a href=\"https://betaflight.com/docs/development\" target=\"_blank\" rel=\"noopener noreferrer\">contributing code</a> to the firmware and app - new features, fixes, improvements;</li><li>testing <a href=\"https://github.com/Betaflight/betaflight/pulls\" target=\"_blank\" rel=\"noopener noreferrer\">new features and fixes</a> and providing feedback;</li><li>helping other users solve the problems they report in <a href=\"https://github.com/betaflight/betaflight/issues\" target=\"_blank\" rel=\"noopener noreferrer\">our issue tracker</a>, and participating in discussions on feature requests;</li><li><a href=\"https://github.com/betaflight/betaflight/tree/master/README.md#Translators\" target=\"_blank\" rel=\"noopener noreferrer\">translating</a> Betaflight App into a new language, or helping to maintain the existing translations.</li></ul>"
+        "message": "<strong>Compatible Platforms:</strong><br /><ul><li>Windows 10/11</li><li>macOS 10.15+</li><li>Linux (Ubuntu 20.04+)</li></ul><br /><strong>Hardware Requirements:</strong><br /><ul><li>USB 2.0 or higher port</li><li>4GB RAM minimum</li><li>Compatible flight controller with serial interface</li><li>Modern web browser with WebGL support</li></ul><br /><strong>Display:</strong><br /><ul><li>Minimum resolution: 1280x720</li><li>Recommended: 1920x1080 or higher</li></ul>"
     },
     "defaultFacebookText": {
-        "message": "We also have a <a href=\"https://www.facebook.com/groups/betaflightgroup/\" target=\"_blank\" rel=\"noopener noreferrer\">Facebook Group</a>.<br />Join us to get a place to talk about Betaflight, ask configuration questions, or just hang out with fellow pilots."
+        "message": "ECHO CORP FC Configurator - Professional Edition"
     },
     "defaultDiscordText": {
-        "message": "Betaflight <a href=\"https://discord.betaflight.com/invite\" target=\"_blank\" rel=\"noopener noreferrer\">Discord Server</a>.<br />Share your flight experience, talk about Betaflight, help other people or get some help for yourself from the community."
+        "message": "Advanced flight controller configuration system with professional-grade tools and cyberpunk interface design."
     },
     "statisticsDisclaimer": {
-        "message": "Betaflight App collects anonymous usage statistics. For example, this data includes (but is not limited to) the number of launches, geographical region of the users, types of flight controllers, firmware versions, usage of UI elements and tabs, etc. The summary of this data is shared <a href=\"https://datastudio.google.com/u/0/reporting/1pK1PFw0eWmsgl2npvuzwAqscVzlhJvuF\" target=\"_blank\" rel=\"noopener noreferrer\">here</a>. Collection is done in order to better understand how Betaflight App is being used, to understand community trends, and for possible UI improvements. Users can opt-out of data collection in the Options tab."
+        "message": "No data collection is performed by ECHO CORP FC Configurator. Your privacy is respected."
     },
     "defaultButtonFirmwareFlasher": {
         "message": "Firmware Flasher"
@@ -804,13 +804,13 @@
         "message": "Documentation / Manual"
     },
     "defaultDocumentation": {
-        "message": "Betaflight documentation is available in release notes and wiki.<br /><br />"
+        "message": "EC Edition documentation and resources are available on our GitHub repository.<br /><br />"
     },
     "defaultDocumentation1": {
-        "message": "The Betaflight wiki is a great resource for information, it can be found <a href=\"https://betaflight.com/docs/wiki\" target=\"_blank\" rel=\"noopener noreferrer\">here</a>."
+        "message": "Visit the EC Edition GitHub repository for documentation, releases, and source code <a href=\"https://github.com/mrelive/EC-configurator\" target=\"_blank\" rel=\"noopener noreferrer\">here</a>."
     },
     "defaultDocumentation2": {
-        "message": "The release notes for the firmware can be read at GitHub releases page, <a href=\"https://github.com/Betaflight/Betaflight/releases\" target=\"_blank\" rel=\"noopener noreferrer\">here</a>."
+        "message": "Check out the latest releases and changelog on our <a href=\"https://github.com/mrelive/EC-configurator/releases\" target=\"_blank\" rel=\"noopener noreferrer\">releases page</a>."
     },
     "defaultSupportHead": {
         "message": "Support"
@@ -822,22 +822,22 @@
         "message": "Developer"
     },
     "defaultSupport": {
-        "message": "For support please search the forums and wiki first or contact your vendor.<br /><br />"
+        "message": "For support, please check our GitHub issues page or reach out through the community channels listed below.<br /><br />"
     },
     "defaultSupport1": {
-        "message": "<a href=\"http://www.rcgroups.com/forums/showthread.php?t=2464844&page=1\" target=\"_blank\" rel=\"noopener noreferrer\">RC Groups thread</a>"
+        "message": "<a href=\"https://github.com/mrelive/EC-configurator/issues\" target=\"_blank\" rel=\"noopener noreferrer\">GitHub Issues</a>"
     },
     "defaultSupport2": {
-        "message": "<a href=\"https://betaflight.com/docs/wiki\" target=\"_blank\" rel=\"noopener noreferrer\">Betaflight Wiki</a>"
+        "message": "<a href=\"https://github.com/mrelive/EC-configurator\" target=\"_blank\" rel=\"noopener noreferrer\">EC Edition Repository</a>"
     },
     "defaultSupport3": {
-        "message": "<a href=\"https://www.youtube.com/playlist?list=PLwoDb7WF6c8nT4jjsE4VENEmwu9x8zDiE\" target=\"_blank\" rel=\"noopener noreferrer\">Joshua Bardwell Betaflight 4.3 Videos</a>"
+        "message": "<a href=\"https://github.com/mrelive/EC-configurator/discussions\" target=\"_blank\" rel=\"noopener noreferrer\">Community Discussions</a>"
     },
     "defaultSupport4": {
-        "message": "<a href=\"https://github.com/Betaflight\" target=\"_blank\" rel=\"noopener noreferrer\">GitHub</a>"
+        "message": "<a href=\"https://github.com/mrelive\" target=\"_blank\" rel=\"noopener noreferrer\">GitHub Organization</a>"
     },
     "defaultSupport5": {
-        "message": "<a href=\"https://discord.betaflight.com/invite\" target=\"_blank\" rel=\"noopener noreferrer\">Betaflight devs on Discord</a>"
+        "message": "<a href=\"https://github.com/mrelive/EC-configurator/wiki\" target=\"_blank\" rel=\"noopener noreferrer\">Project Wiki</a>"
     },
     "initialSetupButtonCalibrateAccel": {
         "message": "Calibrate Accelerometer"

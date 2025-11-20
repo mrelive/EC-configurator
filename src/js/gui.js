@@ -287,8 +287,8 @@ class GuiControl {
         const tRex = GUI.active_tab.replaceAll("_", "-").toLowerCase();
 
         $("div#content #button-documentation")
-            .html(i18n.getMessage("betaflightSupportButton"))
-            .attr("href", `https://betaflight.com/docs/wiki/configurator/${tRex}-tab`);
+            .text("Documentation")
+            .attr("href", `https://github.com/mrelive/EC-configurator/wiki/${tRex}`);
 
         // Create tooltips once page is "ready"
         $(function () {

@@ -1,5 +1,5 @@
 {
-  "appId": "betaflight.configurator",
-  "appName": "Betaflight Configurator",
+  "appId": "ec.edition.fc.configurator",
+  "appName": "EC EDITION FC CONFIGURATOR",
   "webDir": "src/dist"
 }

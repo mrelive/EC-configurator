@@ -72,20 +72,24 @@ export default class PresetsSourcesDialog {
     }
 
     _createOfficialSource() {
+        // Restored original Betaflight firmware presets repository
+        // NOTE: This reintroduces upstream Betaflight preset content.
+        // You can later fork this repo and replace the URL with your own.
         const officialSource = new PresetSource(
-            "Betaflight Official Presets",
+            "Official Presets",
             "https://api.betaflight.com/firmware-presets/",
-            "",
+            "master",
         );
         officialSource.official = true;
         return officialSource;
     }
 
     _createSecondaryOfficialSource() {
+        // Secondary community/example source – points to same repo but can be customized.
         const officialSource = new PresetSource(
-            "Betaflight Presets - GitHub BACKUP",
-            "https://github.com/betaflight/firmware-presets",
-            "backup",
+            "Community Presets (Example)",
+            "https://api.betaflight.com/firmware-presets/",
+            "master",
         );
         officialSource.official = false;
         return officialSource;

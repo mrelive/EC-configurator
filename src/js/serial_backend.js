@@ -61,13 +61,13 @@ export function initializeSerialBackend() {
 
     EventBus.$on("port-handler:auto-select-serial-device", function () {
         if (
-            !GUI.connected_to &&
-            !GUI.connecting_to &&
-            !["cli", "firmware_flasher"].includes(GUI.active_tab) &&
-            PortHandler.portPicker.autoConnect &&
-            !isCliOnlyMode() &&
-            (connectionTimestamp === null || connectionTimestamp > 0) ||
-            (Date.now() - rebootTimestamp <= REBOOT_CONNECT_MAX_TIME_MS)
+            (!GUI.connected_to &&
+                !GUI.connecting_to &&
+                !["cli", "firmware_flasher"].includes(GUI.active_tab) &&
+                PortHandler.portPicker.autoConnect &&
+                !isCliOnlyMode() &&
+                (connectionTimestamp === null || connectionTimestamp > 0)) ||
+            Date.now() - rebootTimestamp <= REBOOT_CONNECT_MAX_TIME_MS
         ) {
             connectDisconnect();
         }
@@ -663,9 +663,12 @@ function onConnect() {
         .show();
 
     if (FC.CONFIG.flightControllerVersion !== "" && !isCliOnlyMode()) {
-        FC.FEATURE_CONFIG.features = new Features(FC.CONFIG);
-        FC.BEEPER_CONFIG.beepers = new Beepers(FC.CONFIG);
-        FC.BEEPER_CONFIG.dshotBeaconConditions = new Beepers(FC.CONFIG, ["RX_LOST", "RX_SET"]);
+        // Don't recreate Features in virtual mode - VirtualFC already set them up
+        if (!CONFIGURATOR.virtualMode) {
+            FC.FEATURE_CONFIG.features = new Features(FC.CONFIG);
+            FC.BEEPER_CONFIG.beepers = new Beepers(FC.CONFIG);
+            FC.BEEPER_CONFIG.dshotBeaconConditions = new Beepers(FC.CONFIG, ["RX_LOST", "RX_SET"]);
+        }
 
         $("#tabs ul.mode-connected").show();
 

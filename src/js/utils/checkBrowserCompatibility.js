@@ -90,7 +90,7 @@ export function checkBrowserCompatibility() {
 
     let errorMessage = "";
     if (!isChromium) {
-        errorMessage = "Betaflight app requires a Chromium based browser (Chrome, Chromium, Edge).<br/>";
+        errorMessage = "EC Edition Configurator requires a Chromium based browser (Chrome, Chromium, Edge).<br/>";
     }
 
     if (!isWebBluetooth) {

@@ -5,7 +5,7 @@ import CONFIGURATOR from "./data_storage.js";
 
 export default class BuildApi {
     constructor() {
-        this._url = "https://build.betaflight.com";
+        this._url = ""; // Disabled for EC Edition
         this._cacheExpirationPeriod = 3600 * 1000;
     }
 
@@ -201,6 +201,9 @@ export default class BuildApi {
     }
 
     async loadSponsorTile(mode, page) {
+        if (!this._url) {
+            return null; // EC Edition - no external sponsors
+        }
         const url = `${this._url}/api/configurator/sponsors/${mode}/${page}`;
         return await this.fetchText(url);
     }

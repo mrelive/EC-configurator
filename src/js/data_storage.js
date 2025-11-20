@@ -16,14 +16,14 @@ const CONFIGURATOR = {
     virtualApiVersion: "0.0.1",
     cliActive: false,
     cliValid: false,
-    productName: "Betaflight Configurator",
+    productName: "EC EDITION FC CONFIGURATOR",
     cliEngineActive: false,
     cliEngineValid: false,
     gitChangesetId: "unknown",
     version: "0.0.1",
     gitRevision: "norevision",
     latestVersion: "0.0.1",
-    latestVersionReleaseUrl: "https://github.com/betaflight/betaflight-configurator/releases",
+    latestVersionReleaseUrl: "https://github.com/mrelive/EC-configurator/releases",
 
     getDisplayVersion: function () {
         if (this.version.indexOf(this.gitRevision) === -1) {

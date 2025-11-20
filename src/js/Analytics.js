@@ -65,7 +65,7 @@ class Analytics {
         this.setOptOut(settings.optOut);
 
         this._settings = settings;
-        this._url = "https://analytics.betaflight.com";
+        this._url = null; // Analytics disabled for EC Edition
 
         this.EVENT_CATEGORIES = {
             APPLICATION: "Application",
@@ -77,7 +77,7 @@ class Analytics {
     }
 
     send(name, properties) {
-        if (this._optOut) {
+        if (this._optOut || !this._url) {
             return;
         }
 

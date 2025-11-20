@@ -1,6 +1,6 @@
 Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: Betaflight Configurator
-Source: https://github.com/betaflight/betaflight-configurator
+Upstream-Name: EC EDITION FC CONFIGURATOR
+Source: https://github.com/mrelive/EC-configurator
 
 Files: *
 Copyright: Copyright 2018 The Betaflight open source project

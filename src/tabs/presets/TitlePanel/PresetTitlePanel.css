@@ -38,8 +38,8 @@
     top: -5px;
 }
 
-.preset_title_panel_betaflight_official {
-    background-image: url(../../../images/icons/cf_icon_welcome_orange.svg);
+.preset_title_panel_official_icon {
+    background-image: url(../../../images/icons/cf_icon_welcome_white.svg);
     width: 25px;
     height: 25px;
     background-size: cover;
@@ -50,6 +50,10 @@
     position: absolute;
     right: 26px;
     top: -5px;
+    box-shadow:
+        0 0 4px var(--primary-400),
+        0 0 8px var(--accent-500);
+    filter: drop-shadow(0 0 3px var(--primary-600));
 }
 
 .preset_title_panel_category {
