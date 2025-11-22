@@ -11,7 +11,7 @@ import "../css/tabs/setup.less";
 import "../css/tabs/help.less";
 import "../css/tabs/ports.less";
 import "../css/tabs/configuration.less";
-import "../css/tabs/pid_tuning.less";
+import "../css/tabs/pid_tuning.less"; // Ensure this is imported if not already, or rely on existing imports
 import "../css/tabs/receiver.less";
 import "../css/tabs/servos.less";
 import "../css/tabs/gps.less";
@@ -72,3 +72,5 @@ const updateSW = registerSW({
         });
     },
 });
+
+console.log(`Cyberpunk UI Loaded - Version: ${  Date.now()}`);

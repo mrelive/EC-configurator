@@ -79,20 +79,46 @@ const Model = function (wrapper, canvas) {
     // move camera away from the model
     this.camera.position.z = 125;
 
-    // Setup lights
-    const light = new THREE.AmbientLight(0x404040);
-    const light2 = new THREE.DirectionalLight(new THREE.Color(1, 1, 1), 1.5);
-    light2.position.set(0, 1, 0);
+    // Setup lights - Cyberpunk Style
+    // Dark ambient to make neon pop
+    const ambientLight = new THREE.AmbientLight(0x202030); // Slightly brighter ambient
+    this.scene.add(ambientLight);
 
-    // Add objects to scene
-    this.scene.add(light);
-    this.scene.add(light2);
+    // Overhead cool white light
+    const overheadLight = new THREE.DirectionalLight(0xddeeff, 1.2); // Increased intensity
+    overheadLight.position.set(0, 1, 0);
+    this.scene.add(overheadLight);
+
+    // Fill light from the front-left to even out shadows
+    const fillLight = new THREE.DirectionalLight(0xaaccff, 0.5);
+    fillLight.position.set(-1, 0.5, 1);
+    this.scene.add(fillLight);
+
+    // Neon Pink (Magenta) Light - Left
+    const neonPink = new THREE.PointLight(0xff00ff, 2.0, 500); // Increased intensity
+    neonPink.position.set(-100, 50, 50);
+    this.scene.add(neonPink);
+
+    // Neon Cyan Light - Right
+    const neonCyan = new THREE.PointLight(0x00ffff, 2.0, 500); // Increased intensity
+    neonCyan.position.set(100, 50, 50);
+    this.scene.add(neonCyan);
+
+    // Neon Purple Underglow
+    const neonPurple = new THREE.PointLight(0xaa00ff, 1.5, 300); // Increased intensity
+    neonPurple.position.set(0, -50, 0);
+    this.scene.add(neonPurple);
     this.scene.add(this.camera);
     this.scene.add(this.modelWrapper);
 
     this.loadGLTF(
         model_file,
         function (model) {
+            if (!model) {
+                console.warn(`Failed to load model: ${model_file}`);
+                return;
+            }
+
             this.model = model;
 
             // Apply canvas renderer optimizations if needed
@@ -110,32 +136,44 @@ const Model = function (wrapper, canvas) {
 
 Model.prototype.loadGLTF = function (model_file, callback) {
     const loader = new GLTFLoader();
-    loader.load(
-        `./resources/models/${model_file}.gltf`,
-        (gltf) => {
-            const model = gltf.scene;
-            model.scale.set(15, 15, 15);
-            callback(model);
-        },
-        (progress) => {
-            // Optional: Handle loading progress
-            if (progress.total > 0) {
-                const pct = Math.round((progress.loaded / progress.total) * 100);
-                if (pct !== this._lastPct) {
-                    // throttle identical values
-                    this._lastPct = pct;
-                    console.log(`Loading progress: ${progress.loaded}/${progress.total} (${pct}%)`);
+
+    const load = (extension) => {
+        loader.load(
+            `./resources/models/${model_file}.${extension}`,
+            (gltf) => {
+                const model = gltf.scene;
+                model.scale.set(25, 25, 25);
+                callback(model);
+            },
+            (progress) => {
+                // Optional: Handle loading progress
+                if (progress.total > 0) {
+                    const pct = Math.round((progress.loaded / progress.total) * 100);
+                    if (pct !== this._lastPct) {
+                        // throttle identical values
+                        this._lastPct = pct;
+                        console.log(`Loading progress: ${progress.loaded}/${progress.total} (${pct}%)`);
+                    }
+                } else {
+                    console.log(`Loading progress: ${progress.loaded} bytes`);
                 }
-            } else {
-                console.log(`Loading progress: ${progress.loaded} bytes`);
-            }
-        },
-        (error) => {
-            console.error("Error loading model:", error);
-            // Fallback to a default model or show error to user
-            callback(null);
-        },
-    );
+            },
+            (error) => {
+                if (extension === "glb") {
+                    console.log(`Failed to load ${model_file}.glb, falling back to .gltf`);
+                    // Try fallback to gltf
+                    load("gltf");
+                } else {
+                    console.error(`Error loading model ${model_file}.${extension}:`, error);
+                    // Fallback to a default model or show error to user
+                    callback(null);
+                }
+            },
+        );
+    };
+
+    // Try loading .glb first, then fallback to .gltf
+    load("glb");
 };
 
 Model.prototype.optimizeGeometry = function (geometry) {
@@ -146,7 +184,7 @@ Model.prototype.optimizeGeometry = function (geometry) {
 
 Model.prototype.createModel = function (geometry, materials) {
     const model = new THREE.Mesh(geometry, materials);
-    model.scale.set(15, 15, 15);
+    model.scale.set(25, 25, 25);
     return model;
 };
 

@@ -13,11 +13,12 @@ const commitHash = child.execSync("git rev-parse --short HEAD").toString().trim(
 
 function serveFileFromDirectory(directory) {
     return (req, res, next) => {
-        const filePath = req.url.replace(new RegExp(`^/${directory}/`), "");
+        const url = req.url.split("?")[0];
+        const filePath = url.replace(new RegExp(`^/${directory}/`), "");
         const absolutePath = path.resolve(process.cwd(), directory, filePath);
 
         try {
-            const fileContents = readFileSync(absolutePath, "utf-8");
+            const fileContents = readFileSync(absolutePath);
             res.end(fileContents);
         } catch (e) {
             // If file not found or any other error, pass to the next middleware

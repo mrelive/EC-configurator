@@ -76,22 +76,26 @@ a.disabled {
     padding: 15px 15px;
 }
 .background_paper {
-    background-color: var(--surface-200);
+    background-color: #050510;
     background-image:
-        linear-gradient(var(--surface-300) 2px, transparent 2px),
-        linear-gradient(90deg, var(--surface-300) 2px, transparent 2px),
-        linear-gradient(var(--surface-300) 1px, transparent 1px),
-        linear-gradient(90deg, var(--surface-300) 1px, rgba(0, 0, 0, 0) 1px);
+        /* Major Grid - Cyan */
+        linear-gradient(rgba(0, 255, 255, 0.15) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 255, 255, 0.15) 1px, transparent 1px),
+        /* Minor Grid - Purple/Blue */ linear-gradient(rgba(100, 0, 255, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(100, 0, 255, 0.05) 1px, transparent 1px),
+        /* Vignette */ radial-gradient(circle at center, transparent 0%, rgba(0, 0, 0, 0.6) 100%);
     background-size:
-        75px 75px,
-        75px 75px,
-        15px 15px,
-        15px 15px;
+        100px 100px,
+        100px 100px,
+        20px 20px,
+        20px 20px,
+        100% 100%;
     background-position:
-        -2px -2px,
-        -2px -2px,
         -1px -1px,
-        -1px -1px;
+        -1px -1px,
+        -1px -1px,
+        -1px -1px,
+        center center;
 }
 .standard_input {
     padding-left: 3px;
@@ -2616,4 +2620,50 @@ each(range(12), {
     .sm-min {
         display: none !important;
     }
+}
+
+/* Cyberpunk Tab Transitions */
+@keyframes glitch-anim {
+    0% {
+        transform: translate(0);
+        opacity: 0;
+        clip-path: inset(50% 0 50% 0);
+    }
+    20% {
+        transform: translate(-5px, 5px);
+        opacity: 1;
+        clip-path: inset(10% 0 60% 0);
+    }
+    40% {
+        transform: translate(5px, -5px);
+        clip-path: inset(40% 0 20% 0);
+    }
+    60% {
+        transform: translate(-5px, 0);
+        clip-path: inset(0 0 0 0);
+    }
+    80% {
+        transform: translate(2px, 2px);
+    }
+    100% {
+        transform: translate(0);
+        opacity: 1;
+    }
+}
+
+@keyframes slide-in-cyber {
+    0% {
+        transform: translateX(20px);
+        opacity: 0;
+        filter: blur(5px);
+    }
+    100% {
+        transform: translateX(0);
+        opacity: 1;
+        filter: blur(0);
+    }
+}
+
+.tab-enter-active {
+    animation: slide-in-cyber 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
 }

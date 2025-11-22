@@ -83,7 +83,7 @@ pid_tuning.initialize = function (callback) {
         .then(() => MSP.send_message(MSPCodes.MSP_MIXER_CONFIG, false, false, load_html));
 
     function load_html() {
-        $("#content").load("./tabs/pid_tuning.html", process_html);
+        $("#content").load(`./tabs/pid_tuning.html?v=${  Date.now()}`, process_html);
     }
 
     const vbatpidcompensationIsUsed = false; // removed in API 1_44
@@ -1111,8 +1111,12 @@ pid_tuning.initialize = function (callback) {
     }
 
     function drawAxes(curveContext, width, height) {
-        curveContext.strokeStyle = "#888888";
-        curveContext.lineWidth = 4;
+        curveContext.save();
+        // Cyberpunk Grid Effect
+        curveContext.strokeStyle = "rgba(0, 230, 230, 0.6)"; // Neon Cyan
+        curveContext.lineWidth = 2;
+        curveContext.shadowBlur = 10;
+        curveContext.shadowColor = "rgba(0, 230, 230, 0.8)";
 
         // Horizontal
         curveContext.beginPath();
@@ -1125,6 +1129,7 @@ pid_tuning.initialize = function (callback) {
         curveContext.moveTo(width / 2, 0);
         curveContext.lineTo(width / 2, height);
         curveContext.stroke();
+        curveContext.restore();
     }
 
     function checkInput(element) {
@@ -1155,6 +1160,10 @@ pid_tuning.initialize = function (callback) {
     function drawCurve(rate, rcRate, rcExpo, useSuperExpo, deadband, limit, maxAngularVel, colour, yOffset, context) {
         context.save();
         context.strokeStyle = colour;
+        context.lineWidth = 3; // Thicker for neon effect
+        context.shadowBlur = 15; // Strong glow
+        context.shadowColor = colour; // Glow matches line color
+        context.lineCap = "round"; // Smooth ends
         context.translate(0, yOffset);
         self.rateCurve.draw(rate, rcRate, rcExpo, useSuperExpo, deadband, limit, maxAngularVel, context);
         context.restore();

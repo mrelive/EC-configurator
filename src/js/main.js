@@ -222,6 +222,11 @@ function startProcess() {
 
                 function content_ready() {
                     GUI.tab_switch_in_progress = false;
+                    // Add cyberpunk transition effect
+                    $("#content").addClass("tab-enter-active");
+                    setTimeout(() => {
+                        $("#content").removeClass("tab-enter-active");
+                    }, 500);
                 }
 
                 checkSetupAnalytics(function (analyticsService) {
