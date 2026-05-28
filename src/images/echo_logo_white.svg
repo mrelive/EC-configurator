@@ -1,12 +1,38 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="180" viewBox="0 0 1200 180" role="img" aria-label="ECHO CORP FC Configurator">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="260" viewBox="0 0 1200 260" role="img" aria-label="ECHO CORP Flight Controller Configurator">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#00f5d4"/>
-      <stop offset="50%" stop-color="#06b6d4"/>
-      <stop offset="100%" stop-color="#8b5cf6"/>
+    <linearGradient id="logoStrokeW" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3f4dff" />
+      <stop offset="100%" stop-color="#b000ff" />
     </linearGradient>
+    <style>
+      .word {
+        font-family: "Segoe UI", Arial, sans-serif;
+        font-weight: 900;
+        fill: url(#logoStrokeW);
+        stroke: #3a00ff;
+        stroke-width: 2.2;
+        paint-order: stroke fill;
+      }
+      .sub {
+        font-family: "Segoe UI", Arial, sans-serif;
+        font-weight: 800;
+        fill: #a000ff;
+        stroke: #24007a;
+        stroke-width: 0.8;
+        paint-order: stroke fill;
+        letter-spacing: 1.8px;
+      }
+    </style>
   </defs>
-  <rect width="1200" height="180" fill="none"/>
-  <text x="16" y="92" fill="url(#g)" font-family="Segoe UI, Arial, sans-serif" font-size="56" font-weight="700" letter-spacing="2">ECHO CORP FC</text>
-  <text x="18" y="142" fill="#f8fafc" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="600" letter-spacing="5">CONFIGURATOR</text>
+
+  <g transform="translate(18,20)">
+    <path d="M92 6 171 51v108L92 204 13 159V51L92 6Z" fill="none" stroke="url(#logoStrokeW)" stroke-width="8" />
+    <path d="M92 19 159 58v94L92 191 25 152V58L92 19Z" fill="none" stroke="#6b27ff" stroke-width="3" />
+    <path d="M57 146V63h68v17H78v15h37v16H78v18h49v17H57Z" fill="none" stroke="#8a2cff" stroke-width="7" opacity="0.35" />
+    <path d="M57 146V63h68v17H78v15h37v16H78v18h49v17H57Z" fill="url(#logoStrokeW)" />
+    <path d="M43 63h12v83H43z" fill="#5f2dff" />
+  </g>
+
+  <text x="220" y="132" class="word" font-size="98">ECHO CORP</text>
+  <text x="220" y="186" class="sub" font-size="43">FLIGHT CONTROLLER CONFIGURATOR</text>
 </svg>

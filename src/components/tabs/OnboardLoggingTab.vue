@@ -606,7 +606,7 @@ export default defineComponent({
                         eraseDialog.value?.close();
                         connectionStore.resumeLiveData();
                         if (getConfig("showNotifications").showNotifications) {
-                            NotificationManager.showNotification("Betaflight App", {
+                            NotificationManager.showNotification("ECHO CORP FC Configurator", {
                                 body: i18n.getMessage("flashEraseDoneNotification"),
                                 icon: "/images/pwa/favicon.ico",
                             });
@@ -660,7 +660,7 @@ export default defineComponent({
             });
 
             if (getConfig("showNotifications").showNotifications) {
-                NotificationManager.showNotification("Betaflight App", {
+                NotificationManager.showNotification("ECHO CORP FC Configurator", {
                     body: i18n.getMessage("flashDownloadDoneNotification"),
                     icon: "/images/pwa/favicon.ico",
                 });

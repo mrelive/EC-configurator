@@ -315,7 +315,7 @@ import RateCurve from "@/js/RateCurve";
 import Model from "@/js/model";
 import semver from "semver";
 import { API_VERSION_1_47 } from "@/js/data_storage";
-import betaflightLogo from "@/images/rate_logos/betaflight.svg";
+import echoLogo from "@/images/echo_corp_logo.png";
 import raceflightLogo from "@/images/rate_logos/raceflight.svg";
 import kissLogo from "@/images/rate_logos/kiss.svg";
 import actualLogo from "@/images/rate_logos/actual.svg";
@@ -327,7 +327,7 @@ const { t } = useTranslation();
 
 // USelect item arrays
 const ratesTypeItems = [
-    { value: 0, label: "Betaflight" },
+    { value: 0, label: "ECHO" },
     { value: 1, label: "Raceflight" },
     { value: 2, label: "KISS" },
     { value: 3, label: "Actual" },
@@ -398,7 +398,7 @@ const ratesType = computed({
 
 // Rates Logo Source
 const ratesLogoSrc = computed(() => {
-    const logos = [betaflightLogo, raceflightLogo, kissLogo, actualLogo, quickratesLogo];
+    const logos = [echoLogo, raceflightLogo, kissLogo, actualLogo, quickratesLogo];
     return logos[ratesType.value] || logos[0];
 });
 

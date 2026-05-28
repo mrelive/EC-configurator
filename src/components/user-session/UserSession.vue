@@ -354,14 +354,14 @@ export default defineComponent({
     width: 180px;
     height: 36px;
     margin: 0 auto 12px;
-    background-image: url(../../images/dark-wide-2.svg);
+    background-image: url(../../images/echo_corp_logo.png);
     background-repeat: no-repeat;
     background-position: center center;
     background-size: contain;
 }
 
 .dark .dialog-logo {
-    background-image: url(../../images/light-wide-2.svg);
+    background-image: url(../../images/echo_corp_logo.png);
 }
 
 .dialog-description {

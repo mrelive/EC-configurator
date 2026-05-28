@@ -54,16 +54,16 @@ export default defineComponent({
 }
 
 .tab_container .logo_image {
-    width: 100%;
+    width: 48px;
     height: 48px;
-    background-image: url(../../images/echo_logo_white.svg);
+    background-image: url(../../images/echo_corp_logo_48.png);
     background-repeat: no-repeat;
-    background-position: left center;
+    background-position: center;
     background-size: contain;
 }
 
 .dark .tab_container .logo_image {
-    background-image: url(../../images/echo_logo_black.svg);
+    background-image: url(../../images/echo_corp_logo_48.png);
 }
 
 @media (max-width: 1055px) {
@@ -72,12 +72,12 @@ export default defineComponent({
     }
     .tab_container .logo_image {
         width: 48px;
-        background-image: url(../../images/echo_logo_white.svg);
+        background-image: url(../../images/echo_corp_logo_48.png);
         background-position: center;
         background-size: contain;
     }
     .dark .tab_container .logo_image {
-        background-image: url(../../images/echo_logo_black.svg);
+        background-image: url(../../images/echo_corp_logo_48.png);
     }
 }
 

@@ -9,7 +9,7 @@
 @source "../../nuxt-ui.vite.js";
 
 @theme static {
-    /* Extending Tailwind colors with Betaflight primary colors */
+    /* Extending Tailwind colors with ECHO CORP primary colors */
     /* Used for Nuxt UI and referenced further in theme.css */
     --color-primary-50: #ecfeff;
     --color-primary-100: #cffafe;
@@ -125,7 +125,7 @@ body[data-theme="amber"] {
     --primary-900: #7a4600;
     --primary-950: #5c2f00;
 
-    /* Directly replacing Nuxt UI primary colors with Betaflight Amber primary colors */
+    /* Directly replacing Nuxt UI primary colors with ECHO CORP amber primary colors */
     --ui-primary: var(--primary-500);
 
     --primary-transparent-1: rgba(255, 167, 36, 0.1);

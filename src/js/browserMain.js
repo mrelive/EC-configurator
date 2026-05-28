@@ -14,9 +14,9 @@ import { useDialogStore } from "../stores/dialog";
 import { registerSW } from "virtual:pwa-register";
 import { isAndroid, isEmbeddedDeployment } from "./utils/checkCompatibility.js";
 
-// Skip PWA/service-worker on embedded deployments (WebSocket-only host, plain HTTP)
-// and Android native builds where they are unnecessary
-if (!isAndroid() && !isEmbeddedDeployment()) {
+// Register service worker only for production web builds.
+// In dev, stale SW caches can cause a persistent white screen on localhost.
+if (import.meta.env.PROD && !isAndroid() && !isEmbeddedDeployment()) {
     const dialogStore = useDialogStore(pinia);
     const updateSW = registerSW({
         onNeedRefresh() {

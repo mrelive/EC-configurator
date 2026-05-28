@@ -1193,7 +1193,7 @@ export class UsbDfuProtocol extends EventTarget {
 
                                 // Show notification
                                 if (getConfig("showNotifications").showNotifications) {
-                                    NotificationManager.showNotification("Betaflight App", {
+                                    NotificationManager.showNotification("ECHO CORP FC Configurator", {
                                         body: i18n.getMessage("programmingSuccessfulNotification"),
                                         icon: "/images/pwa/favicon.ico",
                                     });
@@ -1211,7 +1211,7 @@ export class UsbDfuProtocol extends EventTarget {
 
                                 // Show notification
                                 if (getConfig("showNotifications").showNotifications) {
-                                    NotificationManager.showNotification("Betaflight App", {
+                                    NotificationManager.showNotification("ECHO CORP FC Configurator", {
                                         body: i18n.getMessage("programmingFailedNotification"),
                                         icon: "/images/pwa/favicon.ico",
                                     });
