@@ -10,10 +10,15 @@
             <span class="axis-x">X</span>
             <span class="axis-y">Y</span>
             <span class="axis-z">Z</span>
-            <span class="axis-field">Field</span>
+            <span class="axis-field">{{ $t("magVizAxisField") }}</span>
             <span v-if="inclination !== null" class="axis-incl"
-                >{{ inclination >= 0 ? "↗" : "↘" }}{{ Math.round(inclination) }}°</span
+                >{{ inclination >= 0 ? "↘" : "↗" }}{{ Math.round(inclination) }}°</span
             >
+        </div>
+        <div v-if="sampleCount > 0" class="mag-sphere-age-legend">
+            <span>{{ $t("magVizAgeLegendOld") }}</span>
+            <span class="age-gradient"></span>
+            <span>{{ $t("magVizAgeLegendNew") }}</span>
         </div>
         <div v-if="showLegend" class="mag-sphere-legend">
             {{ legend }}
@@ -21,21 +26,31 @@
     </div>
 </template>
 
-<script setup>
-import { ref, watch, onMounted, onBeforeUnmount } from "vue";
+<script setup lang="ts">
+import { ref, watch, onMounted, onBeforeUnmount, type PropType } from "vue";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { i18n } from "../../../js/localization";
+import { degToRad } from "../../../js/utils/common";
+import { getCssVar } from "../../../js/utils/cssVar";
+import type { MagSample, MagVizMode, Vec3 } from "@/composables/useMagCalibration";
+import type { Quaternion } from "@/stores/fc.types";
 
-const DEG_TO_RAD = Math.PI / 180;
+type ScenePoint = [number, number, number];
+
+const DEFAULT_SPHERE_RADIUS = 400;
 
 const props = defineProps({
     samples: {
-        type: Array,
+        type: Array as PropType<MagSample[]>,
         default: () => [],
     },
+    sampleCount: {
+        type: Number,
+        default: 0,
+    },
     sphereFit: {
-        type: Object,
+        type: Object as PropType<{ center: Vec3; radius: number } | null>,
         default: null,
     },
     active: {
@@ -51,99 +66,174 @@ const props = defineProps({
         default: "",
     },
     liveMag: {
-        type: Object,
+        type: Object as PropType<Vec3 | null>,
         default: null,
     },
     inclination: {
-        type: Number,
+        type: Number as PropType<number | null>,
         default: null,
     },
     coverage: {
-        type: Object,
+        type: Object as PropType<{
+            covered: number;
+            totalFaces: number;
+            fraction: number;
+            faceCounts: number[];
+        } | null>,
         default: null,
     },
     attitude: {
-        type: Object,
-        default: null, // { roll, pitch, heading } in degrees
+        // degrees
+        type: Object as PropType<{ roll: number; pitch: number; heading: number } | null>,
+        default: null,
+    },
+    quaternion: {
+        // unit quaternion from MSP_ATTITUDE_QUATERNION
+        type: Object as PropType<Quaternion | null>,
+        default: null,
     },
     vizMode: {
-        type: String,
+        type: String as PropType<MagVizMode>,
         default: "pointcloud",
+    },
+    calOffsets: {
+        // current firmware mag calibration offsets
+        type: Object as PropType<Vec3 | null>,
+        default: null,
     },
 });
 
-const containerRef = ref(null);
-const canvasRef = ref(null);
-const projCanvasRef = ref(null);
+const containerRef = ref<HTMLElement | null>(null);
+const canvasRef = ref<HTMLCanvasElement | null>(null);
+const projCanvasRef = ref<HTMLCanvasElement | null>(null);
 
 const MAX_POINTS = 5000;
 
-let renderer = null;
-let scene = null;
-let camera = null;
-let controls = null;
-let animationId = null;
-let resizeObserver = null;
+let renderer: THREE.WebGLRenderer | null = null;
+let scene: THREE.Scene | null = null;
+let camera: THREE.PerspectiveCamera | null = null;
+let controls: OrbitControls | null = null;
+let animationId: number | null = null;
+let resizeObserver: ResizeObserver | null = null;
 
 // Point cloud
-let pointGeometry = null;
-let pointMaterial = null;
-let pointMesh = null;
-let positionAttr = null;
-let colorAttr = null;
+let pointGeometry: THREE.BufferGeometry | null = null;
+let pointMaterial: THREE.PointsMaterial | null = null;
+let pointMesh: THREE.Points | null = null;
+let positionAttr: THREE.BufferAttribute | null = null;
+let colorAttr: THREE.BufferAttribute | null = null;
 
 // Wireframe sphere
-let wireframeMesh = null;
-
-// Center marker
-let centerMarker = null;
+let wireframeMesh: THREE.LineSegments | null = null;
 
 // Quad icon at origin reflecting real-time attitude
-let quadIcon = null;
+let quadIcon: THREE.Group | null = null;
+const ATTITUDE_SMOOTH = 0.12;
+const _smoothQuat = new THREE.Quaternion();
+const _targetQuat = new THREE.Quaternion();
+// 180° about X (forward axis): the Betaflight→scene frame adapter.
+// Derivation lives in updateQuadAttitude() — the one genuinely subtle spot.
+const _BASE_180_X = new THREE.Quaternion(1, 0, 0, 0);
+const _tmpEuler = new THREE.Euler();
+let smoothQuatInitialized = false;
 
 // Reference ghost sphere (shown before calibration data arrives)
-let ghostGroup = null;
+let ghostGroup: THREE.Group | null = null;
 
-// Live mag visualization
-let liveMarker = null;
-let vectorLines = null; // [xLine, yLine, zLine] — cylinder-based thick axis lines
-let totalVectorLine = null; // orange line from origin to live mag position
+// Live mag visualization (children of quadIcon — body frame)
+let liveMarker: THREE.Mesh | null = null;
+let noseLine: THREE.Mesh | null = null;
+let vectorLines: THREE.Mesh[] | null = null; // [xPos, xNeg, yPos, yNeg, zPos, zNeg] — bold/thin axis pairs
+
+// Sphere center marker (grey dot at fitted sphere center)
+let sphereCenterMarker: THREE.Mesh | null = null;
+
+// Cal offset marker (green dot showing current firmware calibration offset)
+let calOffsetMarker: THREE.Mesh | null = null;
 
 // Expected field direction reference
-let fieldRefGroup = null; // group containing shaft cylinder + cone arrowhead
+let fieldRefGroup: THREE.Group | null = null; // group containing shaft cylinder + cone arrowhead
 
 // Reusable color for HSL→RGB in updatePoints loop
 const _tempColor = new THREE.Color();
 
 // Compass ring — earth-frame N/S/E/W labels on the horizontal plane
-let compassGroup = null;
+let compassGroup: THREE.Group | null = null;
 
-// Coverage zone indicators
-let zoneMeshes = null;
-const ZONE_KEYS = ["+X", "-X", "+Y", "-Y", "+Z", "-Z"];
-// Display frame: X=forward, Y=left, Z=up  (BF Y negated, BF Z negated)
-const ZONE_DIRS = [
-    [1, 0, 0],
-    [-1, 0, 0],
-    [0, -1, 0], // BF +Y (right) → display -Y
-    [0, 1, 0], // BF -Y (left) → display +Y
-    [0, 0, -1], // BF +Z (down) → display -Z
-    [0, 0, 1], // BF -Z (up) → display +Z
-];
+// Auto-scaling: use average field strength so outliers go outside the sphere
+// while the majority of dots sit on the sphere surface
+let maxFieldStrength = 0;
+let fieldStrengthSum = 0;
+let fieldStrengthCount = 0;
+
+function magScale() {
+    const avg = fieldStrengthCount > 0 ? fieldStrengthSum / fieldStrengthCount : 0;
+    return avg > 0 ? DEFAULT_SPHERE_RADIUS / avg : 1;
+}
+
+function repositionCalOffsetMarker() {
+    if (!calOffsetMarker || maxFieldStrength <= 0) {
+        return;
+    }
+    const offsets = props.calOffsets;
+    if (offsets && (offsets.x !== 0 || offsets.y !== 0 || offsets.z !== 0)) {
+        const s = magScale();
+        calOffsetMarker.position.set(offsets.x * s, -offsets.y * s, offsets.z * s);
+        calOffsetMarker.visible = true;
+    }
+}
 
 // Voxel heatmap — geodesic sphere with per-face coloring
-let heatmapMesh = null;
-let heatmapFaceDirs = null; // unit direction per face (center of each triangle)
-let heatmapFaceCounts = null; // sample count per face
+let heatmapMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial> | null = null;
+let heatmapFaceDirs: ScenePoint[] | null = null; // unit direction per face (center of each triangle)
+let heatmapFaceCounts: Float32Array | null = null; // sample count per face
 
-// Coordinate transform: Betaflight sensor frame → display frame
-// BF: X=forward, Y=right, Z=down  →  Display: X=forward, Y=left, Z=up
-function bfToScene(x, y, z) {
-    return [x, -y, -z];
+// World-space nose direction captured from liveMarker each frame.
+// Stored as unit vectors (nx, ny, nz) per sample — multiplied by
+// totalField * magScale() in updatePoints so dots rescale correctly.
+let noseDirections: number[] = [];
+const _worldPosVec = new THREE.Vector3();
+
+function sampleToScene(s: Vec3, sampleIndex: number): ScenePoint {
+    const totalField = Math.hypot(s.x, s.y, s.z);
+    const r = totalField * magScale();
+    const dIdx = sampleIndex * 3;
+    if (dIdx + 2 < noseDirections.length) {
+        return [noseDirections[dIdx] * r, noseDirections[dIdx + 1] * r, noseDirections[dIdx + 2] * r];
+    }
+    return [0, 0, 0];
+}
+
+// Every canvas here is in the template or freshly created, so a 2D context is always there.
+function context2D(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+        throw new Error("2D canvas context unavailable");
+    }
+    return ctx;
+}
+
+// Meshes, lines, points and sprites carry a geometry and material; groups and bare Object3Ds do not.
+function geometryOf(obj: THREE.Object3D): THREE.BufferGeometry | null {
+    const geometry = "geometry" in obj ? obj.geometry : null;
+    return geometry instanceof THREE.BufferGeometry ? geometry : null;
+}
+
+function materialsOf(obj: THREE.Object3D): THREE.Material[] {
+    const material = "material" in obj ? obj.material : null;
+    const list: unknown[] = Array.isArray(material) ? material : [material];
+    return list.filter((m): m is THREE.Material => m instanceof THREE.Material);
+}
+
+function disposeMaterial(material: THREE.Material) {
+    if ("map" in material && material.map instanceof THREE.Texture) {
+        material.map.dispose();
+    }
+    material.dispose();
 }
 
 // Shared 2D canvas init: size, DPR, clear, background, empty-state text
-function initCanvas2D(sampleList) {
+function initCanvas2D(sampleList: MagSample[]) {
     const canvas = projCanvasRef.value;
     const container = containerRef.value;
     if (!canvas || !container) {
@@ -155,10 +245,10 @@ function initCanvas2D(sampleList) {
     const dpr = Math.min(window.devicePixelRatio, 2);
     canvas.width = w * dpr;
     canvas.height = h * dpr;
-    const ctx = canvas.getContext("2d");
+    const ctx = context2D(canvas);
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "#1a1a2e";
+    ctx.fillStyle = getCssVar("--scene-background");
     ctx.fillRect(0, 0, w, h);
 
     if (!sampleList || sampleList.length === 0) {
@@ -178,18 +268,13 @@ function tempColorCSS() {
 }
 
 // Dispose a THREE.Group: traverse children, dispose geometry/material, remove from scene
-function disposeGroup(group) {
+function disposeGroup(group: THREE.Object3D | null) {
     if (!group) {
         return;
     }
     group.traverse((child) => {
-        if (child.geometry) {
-            child.geometry.dispose();
-        }
-        if (child.material) {
-            child.material.map?.dispose();
-            child.material.dispose();
-        }
+        geometryOf(child)?.dispose();
+        materialsOf(child).forEach(disposeMaterial);
     });
     scene?.remove(group);
 }
@@ -208,41 +293,67 @@ function initScene() {
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setClearColor(0x1a1a2e, 1);
+    renderer.setClearColor(getCssVar("--scene-background"), 1);
 
     // Scene
     scene = new THREE.Scene();
+    maxFieldStrength = 0;
+    fieldStrengthSum = 0;
+    fieldStrengthCount = 0;
+    smoothQuatInitialized = false;
+    noseDirections = [];
 
-    // Camera — Z-up convention, pulled back for isometric overview
+    // Scene is NED: +Z is down, so visual "up" is -Z. Camera sits north-east and
+    // above the origin (+X north, +Y east, -Z up) for an isometric overview.
     camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 50000);
-    camera.up.set(0, 0, 1);
-    camera.position.set(900, 700, 500);
+    camera.up.set(0, 0, -1);
+    camera.position.set(700, 560, -420);
     camera.lookAt(0, 0, 0);
 
     // Lighting
     scene.add(new THREE.AmbientLight(0xffffff, 0.8));
 
-    // Axis lines — sized to frame typical mag readings (200-500 range)
-    const axisLength = 700;
-    addAxisLine(scene, new THREE.Vector3(-axisLength, 0, 0), new THREE.Vector3(axisLength, 0, 0), 0xff4444);
-    addAxisLine(scene, new THREE.Vector3(0, -axisLength, 0), new THREE.Vector3(0, axisLength, 0), 0x44ff44);
-    addAxisLine(scene, new THREE.Vector3(0, 0, -axisLength), new THREE.Vector3(0, 0, axisLength), 0x4444ff);
-
-    // Axis labels
-    addAxisLabel(scene, "X", new THREE.Vector3(axisLength + 40, 0, 0), 0xff4444);
-    addAxisLabel(scene, "Y", new THREE.Vector3(0, axisLength + 40, 0), 0x44ff44);
-    addAxisLabel(scene, "Z", new THREE.Vector3(0, 0, axisLength + 40), 0x4444ff);
+    // Axis lines — thin lines connecting opposite cardinal points through origin
+    const axisLength = DEFAULT_SPHERE_RADIUS;
+    // Red: N–S in horizontal plane (full span)
+    addAxisLine(
+        scene,
+        new THREE.Vector3(-axisLength, 0, 0),
+        new THREE.Vector3(axisLength, 0, 0),
+        getCssVar("--scene-axis-x"),
+        0.35,
+    );
+    // Green: W–E in horizontal plane (full span)
+    addAxisLine(
+        scene,
+        new THREE.Vector3(0, -axisLength, 0),
+        new THREE.Vector3(0, axisLength, 0),
+        getCssVar("--scene-axis-y"),
+        0.35,
+    );
+    // Blue: vertical axis — bold upward, faded downward
+    addAxisLine(scene, new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, axisLength), getCssVar("--scene-axis-z"), 1);
+    addAxisLine(
+        scene,
+        new THREE.Vector3(0, 0, -axisLength),
+        new THREE.Vector3(0, 0, 0),
+        getCssVar("--scene-axis-z"),
+        0.15,
+    );
 
     // Ghost reference sphere — gives visual context before data arrives
-    ghostGroup = createGhostSphere(400);
+    ghostGroup = createGhostSphere(DEFAULT_SPHERE_RADIUS);
     scene.add(ghostGroup);
 
     // Compass ring — earth-frame N/S/E/W at the equatorial plane
-    compassGroup = createCompassRing(450);
+    compassGroup = createCompassRing(DEFAULT_SPHERE_RADIUS);
     scene.add(compassGroup);
 
     // Quad icon at origin — shows real-time attitude during calibration
     quadIcon = createQuadIcon(120);
+    quadIcon.traverse((child) => {
+        child.renderOrder = 10;
+    });
     scene.add(quadIcon);
 
     // Point cloud (pre-allocated)
@@ -258,61 +369,100 @@ function initScene() {
     pointMaterial = new THREE.PointsMaterial({
         size: 4,
         vertexColors: true,
-        sizeAttenuation: true,
+        sizeAttenuation: false,
+        depthWrite: false,
     });
     pointMesh = new THREE.Points(pointGeometry, pointMaterial);
+    pointMesh.frustumCulled = false;
+    pointMesh.renderOrder = 5;
     scene.add(pointMesh);
 
-    // Live mag marker (white dot at current reading)
+    // Live mag marker (white dot on +X axis at total field distance — body frame)
     const liveGeo = new THREE.SphereGeometry(10, 8, 8);
     const liveMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
     liveMarker = new THREE.Mesh(liveGeo, liveMat);
     liveMarker.visible = false;
-    scene.add(liveMarker);
+    liveMarker.renderOrder = 10;
+    quadIcon.add(liveMarker);
 
-    // XYZ thick vector lines (cylinders from origin along each axis to component value)
-    const VECTOR_COLORS = [0xff4444, 0x44ff44, 0x4444ff];
-    vectorLines = VECTOR_COLORS.map((color) => {
-        const geo = new THREE.CylinderGeometry(3, 3, 1, 6);
-        geo.translate(0, 0.5, 0); // pivot at bottom so scaling works from origin
-        const mat = new THREE.MeshBasicMaterial({ color, opacity: 0.85, transparent: true });
-        const mesh = new THREE.Mesh(geo, mat);
-        mesh.visible = false;
-        scene.add(mesh);
-        return mesh;
-    });
+    // White nose-direction line from quad center to live marker
+    const noseGeo = new THREE.CylinderGeometry(1.5, 1.5, 1, 6);
+    noseGeo.translate(0, 0.5, 0);
+    const noseMat = new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.6, transparent: true });
+    noseLine = new THREE.Mesh(noseGeo, noseMat);
+    noseLine.visible = false;
+    noseLine.renderOrder = 9;
+    quadIcon.add(noseLine);
 
-    // Orange total measured field vector (origin → live mag position)
-    const totalGeo = new THREE.CylinderGeometry(2, 2, 1, 6);
-    totalGeo.translate(0, 0.5, 0);
-    const totalMat = new THREE.MeshBasicMaterial({ color: 0xff8800, opacity: 0.9, transparent: true });
-    totalVectorLine = new THREE.Mesh(totalGeo, totalMat);
-    totalVectorLine.visible = false;
-    scene.add(totalVectorLine);
+    // XYZ vector lines — body frame (children of quadIcon, move with quad)
+    // 6 meshes: [xPos, xNeg, yPos, yNeg, zPos, zNeg]
+    // Positive halves are always bold, negative halves always thin
+    const VECTOR_COLORS = ["--scene-axis-x", "--scene-axis-y", "--scene-axis-z"].map((name) => getCssVar(name));
+    vectorLines = [];
+    for (const color of VECTOR_COLORS) {
+        for (const positive of [true, false]) {
+            const geo = new THREE.CylinderGeometry(3, 3, 1, 6);
+            geo.translate(0, 0.5, 0);
+            const mat = new THREE.MeshBasicMaterial({
+                color,
+                opacity: positive ? 0.9 : 0.35,
+                transparent: true,
+            });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.visible = false;
+            mesh.renderOrder = 10;
+            quadIcon.add(mesh);
+            vectorLines.push(mesh);
+        }
+    }
+
+    // Sphere center marker (grey dot at fitted sphere center — scene frame)
+    const centerGeo = new THREE.SphereGeometry(8, 8, 8);
+    const centerMat = new THREE.MeshBasicMaterial({ color: 0x888888 });
+    sphereCenterMarker = new THREE.Mesh(centerGeo, centerMat);
+    sphereCenterMarker.visible = false;
+    sphereCenterMarker.renderOrder = 10;
+    scene.add(sphereCenterMarker);
+
+    // Cal offset marker (green dot at current firmware calibration offset)
+    const calGeo = new THREE.SphereGeometry(10, 10, 10);
+    const calMat = new THREE.MeshBasicMaterial({ color: 0x44ff44, opacity: 0.8, transparent: true });
+    calOffsetMarker = new THREE.Mesh(calGeo, calMat);
+    calOffsetMarker.visible = false;
+    calOffsetMarker.renderOrder = 10;
+    scene.add(calOffsetMarker);
 
     // Expected field direction arrow (orange shaft + cone arrowhead + inclination arc)
     fieldRefGroup = new THREE.Group();
     fieldRefGroup.visible = false;
     const shaftGeo = new THREE.CylinderGeometry(3, 3, 1, 8);
     shaftGeo.translate(0, 0.5, 0);
-    const shaftMat = new THREE.MeshBasicMaterial({ color: 0xff8800, opacity: 0.7, transparent: true });
+    const shaftMat = new THREE.MeshBasicMaterial({
+        color: getCssVar("--scene-field"),
+        opacity: 0.7,
+        transparent: true,
+    });
     fieldRefGroup.userData.shaft = new THREE.Mesh(shaftGeo, shaftMat);
     fieldRefGroup.add(fieldRefGroup.userData.shaft);
     const coneGeo = new THREE.ConeGeometry(8, 24, 8);
-    const coneMat = new THREE.MeshBasicMaterial({ color: 0xff8800 });
+    const coneMat = new THREE.MeshBasicMaterial({ color: getCssVar("--scene-field") });
     fieldRefGroup.userData.cone = new THREE.Mesh(coneGeo, coneMat);
     fieldRefGroup.add(fieldRefGroup.userData.cone);
 
-    // South-pole shaft (grey, same geometry as north shaft)
+    // South-pole shaft (orange, thinner — same color as north, differentiated by thickness)
     const southShaftGeo = new THREE.CylinderGeometry(3, 3, 1, 8);
     southShaftGeo.translate(0, 0.5, 0);
-    const southShaftMat = new THREE.MeshBasicMaterial({ color: 0x888888, opacity: 0.7, transparent: true });
+    const southShaftMat = new THREE.MeshBasicMaterial({
+        color: getCssVar("--scene-field"),
+        opacity: 0.7,
+        transparent: true,
+    });
     fieldRefGroup.userData.southShaft = new THREE.Mesh(southShaftGeo, southShaftMat);
     fieldRefGroup.add(fieldRefGroup.userData.southShaft);
 
-    // South-pole cone (grey, tip points outward along south pole)
+    // South-pole cone (orange, tip points outward along south pole)
     const southConeGeo = new THREE.ConeGeometry(8, 24, 8);
-    const southConeMat = new THREE.MeshBasicMaterial({ color: 0x888888 });
+    const southConeMat = new THREE.MeshBasicMaterial({ color: getCssVar("--scene-field") });
     fieldRefGroup.userData.southCone = new THREE.Mesh(southConeGeo, southConeMat);
     fieldRefGroup.add(fieldRefGroup.userData.southCone);
 
@@ -321,23 +471,8 @@ function initScene() {
     fieldRefGroup.userData.arcLabel = null;
     scene.add(fieldRefGroup);
 
-    // Coverage zone indicators (6 discs at sphere poles, colored by sample density)
-    zoneMeshes = ZONE_DIRS.map(() => {
-        const geo = new THREE.CircleGeometry(1, 16);
-        const mat = new THREE.MeshBasicMaterial({
-            color: 0x888888,
-            transparent: true,
-            opacity: 0.4,
-            side: THREE.DoubleSide,
-        });
-        const mesh = new THREE.Mesh(geo, mat);
-        mesh.visible = false;
-        scene.add(mesh);
-        return mesh;
-    });
-
     // Voxel heatmap sphere (unit radius, scaled at render time)
-    createHeatmapSphere(1);
+    createHeatmapSphere(scene, 1);
 
     // OrbitControls
     controls = new OrbitControls(camera, canvas);
@@ -364,24 +499,59 @@ function updateGhostSphere() {
     }
     const targetOpacity = props.sphereFit ? 0 : 0.12;
     ghostGroup.traverse((child) => {
-        if (child.material) {
-            child.material.opacity += (targetOpacity - child.material.opacity) * 0.05;
+        for (const material of materialsOf(child)) {
+            material.opacity += (targetOpacity - material.opacity) * 0.05;
         }
     });
-    ghostGroup.visible = !props.sphereFit || ghostGroup.children[0]?.material?.opacity > 0.01;
+    const firstRing = ghostGroup.children[0];
+    const firstRingOpacity = firstRing ? (materialsOf(firstRing)[0]?.opacity ?? 0) : 0;
+    ghostGroup.visible = !props.sphereFit || firstRingOpacity > 0.01;
 }
 
 function updateQuadAttitude() {
-    if (!quadIcon || !props.attitude) {
+    if (!quadIcon) {
         return;
     }
-    // BF frame: X=fwd, Y=right, Z=down → Display: X=fwd, Y=left, Z=up
-    // Flipping Y and Z negates all rotation directions.
-    // Euler order ZYX: heading (Z) → pitch (Y) → roll (X)
-    // TODO: Euler ZYX has gimbal lock at +/-90 pitch. Upgrade to
-    // MSP_ATTITUDE_QUATERNION (code 167) when configurator support is added.
-    const { roll, pitch, heading } = props.attitude;
-    quadIcon.rotation.set(-roll * DEG_TO_RAD, -pitch * DEG_TO_RAD, -heading * DEG_TO_RAD, "ZYX");
+
+    // Frame adapter. Betaflight attitude is FLU/NWU; this scene is FRD/NED.
+    // They differ by 180° about X (flip Y and Z), so the mesh gets Rx180·q.
+    //
+    // Done in two steps that look redundant but aren't — drop either and the
+    // hemisphere bug returns (hidden near the equator, obvious at high latitude):
+    //   1. set(x,-y,-z,w) is the conjugation p·q·p*   (p = _BASE_180_X = Rx180)
+    //   2. the ·_BASE_180_X below cancels the trailing p* (p*·p = I), leaving
+    //      net = p·q = Rx180·q — one proper rotation (det +1), independent of
+    //      field direction and sensor, hence correct in both hemispheres.
+    // Both input paths share this adapter so they can't diverge.
+    if (props.quaternion) {
+        const { w, x, y, z } = props.quaternion;
+        _targetQuat.set(x, -y, -z, w);
+    } else if (props.attitude) {
+        // Euler fallback (firmware without MSP_ATTITUDE_QUATERNION, API < 1.48).
+        // Reconstruct the same body(FLU)→earth(NWU) quaternion the quaternion path
+        // receives, then apply the same adapter. Betaflight heading is left-handed
+        // about the Up axis (firmware: yaw = -atan2(W, N)), so the ZYX yaw term must
+        // be NEGATED to reproduce that quaternion — otherwise East/West are swapped
+        // while roll/pitch stay correct.
+        const { roll, pitch, heading } = props.attitude;
+        _tmpEuler.set(degToRad(roll), degToRad(pitch), degToRad(-heading), "ZYX");
+        _tmpQuat.setFromEuler(_tmpEuler);
+        _targetQuat.set(_tmpQuat.x, -_tmpQuat.y, -_tmpQuat.z, _tmpQuat.w);
+    } else {
+        return;
+    }
+
+    // Ease in (slerp is right-equivariant, so smoothing before the ·_BASE_180_X
+    // gives the same net Rx180·q).
+    if (!smoothQuatInitialized) {
+        _smoothQuat.copy(_targetQuat);
+        smoothQuatInitialized = true;
+    } else {
+        _smoothQuat.slerp(_targetQuat, ATTITUDE_SMOOTH);
+    }
+    // Step 2: cancels the conjugation's p* → net Rx180·q. Dots and live-mag
+    // vectors are children of quadIcon, so they inherit it automatically.
+    quadIcon.quaternion.copy(_smoothQuat).multiply(_BASE_180_X);
 }
 
 // Quaternion helpers for orienting cylinders along arbitrary axes
@@ -390,37 +560,35 @@ const _orientVec = new THREE.Vector3();
 const _tmpVec = new THREE.Vector3();
 const _tmpQuat = new THREE.Quaternion();
 
-function orientCylinder(mesh, axis, length) {
+function orientCylinder(mesh: THREE.Object3D, axis: THREE.Vector3, length: number) {
     _orientVec.copy(axis).normalize();
     _tmpQuat.setFromUnitVectors(_UP, _orientVec);
     mesh.quaternion.copy(_tmpQuat);
     mesh.scale.set(1, Math.abs(length), 1);
 }
 
-function updateAxisCylinders(showLive, mx, my, mz) {
+function updateAxisCylinders(lines: THREE.Mesh[], showLive: boolean, mx: number, my: number, mz: number) {
     const comps = [mx, my, mz];
-    for (let i = 0; i < 3; i++) {
-        vectorLines[i].visible = showLive && Math.abs(comps[i]) > 1;
-        if (vectorLines[i].visible) {
-            _tmpVec.set(0, 0, 0).setComponent(i, Math.sign(comps[i]));
-            orientCylinder(vectorLines[i], _tmpVec, comps[i]);
-            vectorLines[i].position.set(0, 0, 0);
+    const s = magScale();
+    for (let axis = 0; axis < 3; axis++) {
+        const len = Math.abs(comps[axis]) * s;
+        const vis = showLive && len > 1;
+        const posIdx = axis * 2;
+        const negIdx = axis * 2 + 1;
+        lines[posIdx].visible = vis;
+        lines[negIdx].visible = vis;
+        if (vis) {
+            // Positive half: always bold, points in +axis direction
+            _tmpVec.set(0, 0, 0).setComponent(axis, 1);
+            orientCylinder(lines[posIdx], _tmpVec, len);
+            lines[posIdx].position.set(0, 0, 0);
+            lines[posIdx].scale.x = 1.5;
+            lines[posIdx].scale.z = 1.5;
+            // Negative half: always thin, points in -axis direction
+            _tmpVec.set(0, 0, 0).setComponent(axis, -1);
+            orientCylinder(lines[negIdx], _tmpVec, len);
+            lines[negIdx].position.set(0, 0, 0);
         }
-    }
-}
-
-function updateTotalVector(showLive, mx, my, mz) {
-    totalVectorLine.visible = showLive;
-    if (!showLive) {
-        return;
-    }
-    const len = Math.hypot(mx, my, mz);
-    if (len > 1) {
-        _tmpVec.set(mx, my, mz);
-        orientCylinder(totalVectorLine, _tmpVec, len);
-        totalVectorLine.position.set(0, 0, 0);
-    } else {
-        totalVectorLine.visible = false;
     }
 }
 
@@ -430,20 +598,63 @@ function updateLiveMagOverlay() {
     }
     const mag = props.liveMag;
     const showLive = props.active && mag && (mag.x !== 0 || mag.y !== 0 || mag.z !== 0);
-    const mx = showLive ? mag.x : 0;
-    const my = showLive ? -mag.y : 0;
-    const mz = showLive ? -mag.z : 0;
+    // Body-frame components for vector lines in quad's local display frame.
+    // BF mag convention: X=fwd, Y=right, Z=up (Z is positive upward, opposite to gyro/accel Z=down).
+    // Display local frame: X=fwd, Y=left, Z=up → negate only Y.
+    const bx = showLive ? mag.x : 0;
+    const by = showLive ? -mag.y : 0;
+    const bz = showLive ? mag.z : 0;
     if (liveMarker) {
-        liveMarker.visible = showLive;
+        liveMarker.visible = !!showLive;
+        if (noseLine) {
+            noseLine.visible = !!showLive;
+        }
         if (showLive) {
-            liveMarker.position.set(mx, my, mz);
+            placeLiveMarker(liveMarker, mag);
         }
     }
     if (vectorLines) {
-        updateAxisCylinders(showLive, mx, my, mz);
+        updateAxisCylinders(vectorLines, !!showLive, bx, by, bz);
     }
-    if (totalVectorLine) {
-        updateTotalVector(showLive, mx, my, mz);
+}
+
+// Put the live marker (and nose line) at the current field strength along the nose.
+function placeLiveMarker(marker: THREE.Mesh, mag: Vec3) {
+    const totalField = Math.hypot(mag.x, mag.y, mag.z);
+    if (totalField > maxFieldStrength * 1.02 || maxFieldStrength === 0) {
+        maxFieldStrength = totalField;
+        repositionCalOffsetMarker();
+    }
+    marker.position.set(totalField * magScale(), 0, 0);
+
+    if (noseLine) {
+        noseLine.visible = true;
+        _tmpVec.set(1, 0, 0);
+        orientCylinder(noseLine, _tmpVec, totalField * magScale());
+        noseLine.position.set(0, 0, 0);
+    }
+
+    recordNoseDirection(marker, totalField);
+}
+
+// Capture nose direction for dot placement — uses the same
+// transform chain as the liveMarker so dots always match.
+function recordNoseDirection(marker: THREE.Mesh, totalField: number) {
+    quadIcon?.updateWorldMatrix(true, false);
+    marker.getWorldPosition(_worldPosVec);
+    const r = totalField * magScale();
+    // NaN included: the original only recorded when r > 0.
+    if (Number.isNaN(r) || r <= 0) {
+        return;
+    }
+    const invR = 1 / r;
+    const nx = _worldPosVec.x * invR;
+    const ny = _worldPosVec.y * invR;
+    const nz = _worldPosVec.z * invR;
+    const target = props.sampleCount;
+    const have = noseDirections.length / 3;
+    for (let i = have; i < target; i++) {
+        noseDirections.push(nx, ny, nz);
     }
 }
 
@@ -453,61 +664,112 @@ function updateFieldReferenceArrow() {
         return;
     }
     const use3D = props.vizMode === "pointcloud" || props.vizMode === "heatmap";
-    fieldRefGroup.visible = use3D && props.inclination !== null && props.sphereFit;
+    fieldRefGroup.visible = use3D && props.inclination !== null;
 }
 
 // Called from watchers when sphereFit or inclination changes
 function rebuildFieldReference() {
-    if (!fieldRefGroup || props.inclination === null || !props.sphereFit) {
+    if (!fieldRefGroup || props.inclination === null) {
         return;
     }
 
-    const incl = (props.inclination * Math.PI) / 180;
-    const { center, radius } = props.sphereFit;
-    // Field direction: horizontal along X, vertical along Z
-    // Display frame: Z-up, so field dips toward -Z
+    const incl = degToRad(props.inclination);
+    const radius = DEFAULT_SPHERE_RADIUS;
+    // Field direction: horizontal along +X (magnetic north), vertical along Z.
+    // Scene is NED (Z-down, set in initScene): the downward field component is
+    // +sin(incl)·Z. Northern inclination (>0) dips toward +Z (down); southern
+    // (<0) toward -Z (up). (The camera flip in the NED conversion inverted this;
+    // the sign here was left in the old Z-up convention.)
     const fdx = Math.cos(incl) * radius;
-    const fdz = -Math.sin(incl) * radius;
+    const fdz = Math.sin(incl) * radius;
 
-    // Position at sphere center (BF→display inline)
-    fieldRefGroup.position.set(center.x, -center.y, -center.z);
+    // Always positioned at origin — the field line passes through 0,0,0
+    fieldRefGroup.position.set(0, 0, 0);
 
-    // Orient shaft + cone
-    const shaft = fieldRefGroup.userData.shaft;
-    const cone = fieldRefGroup.userData.cone;
+    orientFieldArrows(fieldRefGroup, fdx, fdz, props.inclination);
+    disposeFieldLabels(fieldRefGroup);
+    addInclinationArc(fieldRefGroup, incl, radius, props.inclination);
+    addPoleLabels(fieldRefGroup, fdx, fdz, props.inclination);
+}
+
+// Orient shaft + cone — pull cone inward so its tip sits at the sphere surface
+// Small orange sprite label
+function makeFieldLabel(group: THREE.Group, text: string, x: number, z: number, size = 60) {
+    const cv = document.createElement("canvas");
+    cv.width = 128;
+    cv.height = 64;
+    const c = context2D(cv);
+    c.fillStyle = getCssVar("--scene-field");
+    c.font = "bold 48px sans-serif";
+    c.textAlign = "center";
+    c.textBaseline = "middle";
+    c.fillText(text, 64, 32);
+    const tex = new THREE.CanvasTexture(cv);
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+    const s = new THREE.Sprite(mat);
+    s.position.set(x, 0, z);
+    s.scale.set(size, size * 0.5, 1);
+    group.add(s);
+    return s;
+}
+
+function orientFieldArrows(group: THREE.Group, fdx: number, fdz: number, inclination: number) {
+    const shaft = group.userData.shaft;
+    const cone = group.userData.cone;
     _tmpVec.set(fdx, 0, fdz);
     const len = _tmpVec.length();
+    const coneHalfH = 12;
     if (len > 1) {
-        orientCylinder(shaft, _tmpVec, len);
+        orientCylinder(shaft, _tmpVec, len - coneHalfH);
         shaft.position.set(0, 0, 0);
-        cone.position.set(fdx, 0, fdz);
-        _tmpQuat.setFromUnitVectors(_UP, _tmpVec.normalize());
+        const dir = _tmpVec.clone().normalize();
+        cone.position.copy(dir.clone().multiplyScalar(len - coneHalfH));
+        _tmpQuat.setFromUnitVectors(_UP, dir);
         cone.quaternion.copy(_tmpQuat);
 
         // South pole: negate the field direction
-        const southShaft = fieldRefGroup.userData.southShaft;
-        const southCone = fieldRefGroup.userData.southCone;
+        const southShaft = group.userData.southShaft;
+        const southCone = group.userData.southCone;
+        const sDir = dir.clone().negate();
         _tmpVec.set(-fdx, 0, -fdz);
-        orientCylinder(southShaft, _tmpVec, len);
+        orientCylinder(southShaft, _tmpVec, len - coneHalfH);
         southShaft.position.set(0, 0, 0);
-        southCone.position.set(-fdx, 0, -fdz);
-        _tmpQuat.setFromUnitVectors(_UP, _tmpVec.normalize());
+        southCone.position.copy(sDir.clone().multiplyScalar(len - coneHalfH));
+        _tmpQuat.setFromUnitVectors(_UP, sDir);
         southCone.quaternion.copy(_tmpQuat);
-    }
 
-    // Dispose old arc + label
-    if (fieldRefGroup.userData.arc) {
-        fieldRefGroup.remove(fieldRefGroup.userData.arc);
-        fieldRefGroup.userData.arc.geometry.dispose();
-        fieldRefGroup.userData.arc.material.dispose();
+        // Hemisphere-aware thickness: dominant pole gets thicker shaft + larger cone
+        // Must run after orientCylinder() which resets scale.x/z to 1
+        const dominantNorth = inclination > 0;
+        const dominantSouth = inclination < 0;
+        const THICK = 5 / 3;
+        const northScale = dominantNorth ? THICK : 1;
+        const southScale = dominantSouth ? THICK : 1;
+        shaft.scale.x = northScale;
+        shaft.scale.z = northScale;
+        cone.scale.setScalar(dominantNorth ? 1.3 : 1);
+        southShaft.scale.x = southScale;
+        southShaft.scale.z = southScale;
+        southCone.scale.setScalar(dominantSouth ? 1.3 : 1);
     }
-    if (fieldRefGroup.userData.arcLabel) {
-        fieldRefGroup.remove(fieldRefGroup.userData.arcLabel);
-        fieldRefGroup.userData.arcLabel.material.map?.dispose();
-        fieldRefGroup.userData.arcLabel.material.dispose();
-    }
+}
 
-    // Inclination arc: curved line from horizontal (+X) down to field direction
+// Dispose old arc + labels
+function disposeFieldLabels(group: THREE.Group) {
+    for (const key of ["arc", "arcLabel", "magNorthLabel", "magSouthLabel", "inclLabel"]) {
+        const obj = group.userData[key];
+        if (!(obj instanceof THREE.Object3D)) {
+            continue;
+        }
+        group.remove(obj);
+        geometryOf(obj)?.dispose();
+        materialsOf(obj).forEach(disposeMaterial);
+        group.userData[key] = null;
+    }
+}
+
+// Inclination arc: curved line from horizontal (+X) down to field direction, with its angle label
+function addInclinationArc(group: THREE.Group, incl: number, radius: number, inclination: number) {
     const arcRadius = radius * 0.35;
     const arcPoints = [];
     for (let i = 0; i <= 24; i++) {
@@ -515,70 +777,48 @@ function rebuildFieldReference() {
         arcPoints.push(new THREE.Vector3(Math.cos(a) * arcRadius, 0, -Math.sin(a) * arcRadius));
     }
     const arcGeo = new THREE.BufferGeometry().setFromPoints(arcPoints);
-    const arcMat = new THREE.LineBasicMaterial({ color: 0xff8800, opacity: 0.6, transparent: true });
-    fieldRefGroup.userData.arc = new THREE.Line(arcGeo, arcMat);
-    fieldRefGroup.add(fieldRefGroup.userData.arc);
+    const arcMat = new THREE.LineBasicMaterial({ color: getCssVar("--scene-field"), opacity: 0.6, transparent: true });
+    group.userData.arc = new THREE.Line(arcGeo, arcMat);
+    group.add(group.userData.arc);
 
     // Angle label at arc midpoint
     const midAngle = -incl / 2;
     const labelCanvas = document.createElement("canvas");
     labelCanvas.width = 128;
     labelCanvas.height = 48;
-    const ctx = labelCanvas.getContext("2d");
-    ctx.fillStyle = "#ff8800";
+    const ctx = context2D(labelCanvas);
+    ctx.fillStyle = getCssVar("--scene-field");
     ctx.font = "bold 28px sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(`${Math.round(props.inclination)}°`, 64, 24);
+    ctx.fillText(`${Math.round(inclination)}°`, 64, 24);
     const labelTexture = new THREE.CanvasTexture(labelCanvas);
     const labelMat = new THREE.SpriteMaterial({ map: labelTexture, transparent: true });
     const labelSprite = new THREE.Sprite(labelMat);
     labelSprite.position.set(Math.cos(midAngle) * arcRadius * 1.4, 0, -Math.sin(midAngle) * arcRadius * 1.4);
     labelSprite.scale.set(80, 30, 1);
-    fieldRefGroup.userData.arcLabel = labelSprite;
-    fieldRefGroup.add(labelSprite);
+    group.userData.arcLabel = labelSprite;
+    group.add(labelSprite);
 }
 
-function updateCoverageZones() {
-    if (!zoneMeshes) {
-        return;
-    }
-    if (props.vizMode !== "pointcloud") {
-        for (const mesh of zoneMeshes) {
-            mesh.visible = false;
-        }
-        return;
-    }
-    if (props.coverage && props.sphereFit) {
-        const { center, radius } = props.sphereFit;
-        const scx = center.x,
-            scy = -center.y,
-            scz = -center.z;
-        const target = Math.max(props.coverage.total / 6, 1);
-        const discRadius = radius * 0.15;
+// Magnetic N/S labels just past the arrow tips, and the inclination at the dominant pole end
+function addPoleLabels(group: THREE.Group, fdx: number, fdz: number, inclination: number) {
+    // North pole = positive inclination end, South = negative
+    const tipOffset = 1.15;
+    group.userData.magNorthLabel = makeFieldLabel(group, "N", fdx * tipOffset, fdz * tipOffset);
+    group.userData.magSouthLabel = makeFieldLabel(group, "S", -fdx * tipOffset, -fdz * tipOffset);
 
-        const zones = props.coverage.zones || {};
-        for (let i = 0; i < 6; i++) {
-            const count = zones[ZONE_KEYS[i]] || 0;
-            const ratio = Math.min(count / target, 1);
-            zoneMeshes[i].material.color.setHSL(ratio * 0.33, 1, 0.5);
-            zoneMeshes[i].scale.setScalar(discRadius);
-            const d = ZONE_DIRS[i];
-            zoneMeshes[i].position.set(scx + d[0] * radius, scy + d[1] * radius, scz + d[2] * radius);
-            zoneMeshes[i].lookAt(scx + d[0] * radius * 2, scy + d[1] * radius * 2, scz + d[2] * radius * 2);
-            zoneMeshes[i].visible = true;
-        }
-    } else {
-        for (const mesh of zoneMeshes) {
-            mesh.visible = false;
-        }
-    }
+    // Inclination angle at the dominant pole end (just outside the sphere)
+    const sign = inclination >= 0 ? "+" : "";
+    const inclText = `${sign}${Math.round(inclination)}°`;
+    const inclPos = inclination >= 0 ? 1.25 : -1.25;
+    group.userData.inclLabel = makeFieldLabel(group, inclText, fdx * inclPos, fdz * inclPos, 80);
 }
 
 // --- Voxel Heatmap ---
 const HEATMAP_DETAIL = 2; // icosahedron subdivision level → 320 faces
 
-function createHeatmapSphere(radius) {
+function createHeatmapSphere(targetScene: THREE.Scene, radius: number) {
     const ico = new THREE.IcosahedronGeometry(radius, HEATMAP_DETAIL);
     // Convert indexed → non-indexed so each face gets its own color
     const geo = ico.toNonIndexed();
@@ -615,11 +855,11 @@ function createHeatmapSphere(radius) {
     });
     heatmapMesh = new THREE.Mesh(geo, mat);
     heatmapMesh.visible = false;
-    scene.add(heatmapMesh);
+    targetScene.add(heatmapMesh);
 }
 
-function updateHeatmap(sampleList) {
-    if (!heatmapMesh || !heatmapFaceDirs) {
+function updateHeatmap(sampleList: MagSample[]) {
+    if (!heatmapMesh || !heatmapFaceDirs || !heatmapFaceCounts) {
         return;
     }
     if (!sampleList || sampleList.length === 0 || !props.sphereFit) {
@@ -627,12 +867,12 @@ function updateHeatmap(sampleList) {
         return;
     }
 
-    const { center, radius } = props.sphereFit;
-    const [scx, scy, scz] = bfToScene(center.x, center.y, center.z);
-
-    // Resize heatmap sphere to match fitted sphere
-    heatmapMesh.position.set(scx, scy, scz);
-    heatmapMesh.scale.setScalar(radius / 1); // IcosahedronGeometry default radius = 1
+    // In attitude-based view, sphere is centered at origin
+    const scx = 0,
+        scy = 0,
+        scz = 0;
+    heatmapMesh.position.set(0, 0, 0);
+    heatmapMesh.scale.setScalar(DEFAULT_SPHERE_RADIUS);
 
     // Reset counts
     heatmapFaceCounts.fill(0);
@@ -642,7 +882,7 @@ function updateHeatmap(sampleList) {
     const start = Math.max(0, sampleList.length - MAX_POINTS);
     for (let i = 0; i < count; i++) {
         const s = sampleList[start + i];
-        const [sx, sy, sz] = bfToScene(s.x, s.y, s.z);
+        const [sx, sy, sz] = sampleToScene(s, start + i);
         // Direction from sphere center to sample
         const dx = sx - scx;
         const dy = sy - scy;
@@ -690,12 +930,12 @@ function updateHeatmap(sampleList) {
 
 // --- Triple Projection (2D canvas) ---
 const PROJ_PLANES = [
-    { label: "XY", a: 0, b: 1, aLabel: "X", bLabel: "Y", aColor: "#ff4444", bColor: "#44ff44" },
-    { label: "XZ", a: 0, b: 2, aLabel: "X", bLabel: "Z", aColor: "#ff4444", bColor: "#4444ff" },
-    { label: "YZ", a: 1, b: 2, aLabel: "Y", bLabel: "Z", aColor: "#44ff44", bColor: "#4444ff" },
+    { label: "XY", a: 0, b: 1, aLabel: "X", bLabel: "Y", aColorVar: "--scene-axis-x", bColorVar: "--scene-axis-y" },
+    { label: "XZ", a: 0, b: 2, aLabel: "X", bLabel: "Z", aColorVar: "--scene-axis-x", bColorVar: "--scene-axis-z" },
+    { label: "YZ", a: 1, b: 2, aLabel: "Y", bLabel: "Z", aColorVar: "--scene-axis-y", bColorVar: "--scene-axis-z" },
 ];
 
-function drawProjection(sampleList) {
+function drawProjection(sampleList: MagSample[]) {
     const result = initCanvas2D(sampleList);
     if (!result) {
         return;
@@ -708,20 +948,15 @@ function drawProjection(sampleList) {
     const start = Math.max(0, sampleList.length - MAX_POINTS);
     for (let i = 0; i < count; i++) {
         const s = sampleList[start + i];
-        const [sx, sy, sz] = bfToScene(s.x, s.y, s.z);
-        pts.push([sx, sy, sz]);
+        pts.push(sampleToScene(s, start + i));
     }
 
-    // Sphere fit center and radius in display frame
+    // In attitude-based view, sphere is centered at origin
     const fit = props.sphereFit;
-    let cx = 0,
+    const cx = 0,
         cy = 0,
-        cz = 0,
-        radius = 300;
-    if (fit) {
-        [cx, cy, cz] = bfToScene(fit.center.x, fit.center.y, fit.center.z);
-        radius = fit.radius;
-    }
+        cz = 0;
+    const radius = DEFAULT_SPHERE_RADIUS;
 
     // Layout: 3 circles in a row
     const gap = 8;
@@ -764,7 +999,7 @@ function drawProjection(sampleList) {
             // Draw center cross
             const ccx = px + cA * scale;
             const ccy = py - cB * scale;
-            ctx.strokeStyle = "#ffff00";
+            ctx.strokeStyle = getCssVar("--scene-marker");
             ctx.lineWidth = 1;
             ctx.beginPath();
             ctx.moveTo(ccx - 4, ccy);
@@ -789,10 +1024,10 @@ function drawProjection(sampleList) {
         ctx.font = "bold 11px sans-serif";
         ctx.textAlign = "center";
         // Horizontal axis label
-        ctx.fillStyle = plane.aColor;
+        ctx.fillStyle = getCssVar(plane.aColorVar);
         ctx.fillText(plane.aLabel, px, py + plotR + 14);
         // Vertical axis label
-        ctx.fillStyle = plane.bColor;
+        ctx.fillStyle = getCssVar(plane.bColorVar);
         ctx.save();
         ctx.translate(px - plotR - 10, py);
         ctx.rotate(-Math.PI / 2);
@@ -810,21 +1045,19 @@ function drawProjection(sampleList) {
 const POLAR_SECTORS = 36; // 10° per sector
 const POLAR_RINGS = 6; // elevation bands from pole to pole
 
-function computePolarDensity(sampleList) {
+function computePolarDensity(sampleList: MagSample[]) {
     const density = new Float32Array(POLAR_SECTORS * POLAR_RINGS);
     const count = Math.min(sampleList.length, MAX_POINTS);
     const start = Math.max(0, sampleList.length - MAX_POINTS);
 
-    let cx = 0,
+    // In attitude-based view, sphere is centered at origin
+    const cx = 0,
         cy = 0,
         cz = 0;
-    if (props.sphereFit) {
-        [cx, cy, cz] = bfToScene(props.sphereFit.center.x, props.sphereFit.center.y, props.sphereFit.center.z);
-    }
 
     for (let i = 0; i < count; i++) {
         const s = sampleList[start + i];
-        const [sx, sy, sz] = bfToScene(s.x, s.y, s.z);
+        const [sx, sy, sz] = sampleToScene(s, start + i);
         const dx = sx - cx;
         const dy = sy - cy;
         const dz = sz - cz;
@@ -845,7 +1078,7 @@ function computePolarDensity(sampleList) {
     return { density, maxDensity: Math.max(1, ...density) };
 }
 
-function drawPolarDensity(sampleList) {
+function drawPolarDensity(sampleList: MagSample[]) {
     const result = initCanvas2D(sampleList);
     if (!result) {
         return;
@@ -907,13 +1140,15 @@ function drawPolarDensity(sampleList) {
     ctx.font = "bold 12px sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    const labels = [
+    const labels: [string, number][] = [
         ["X+", -Math.PI / 2],
         ["Y+", 0],
         ["X-", Math.PI / 2],
         ["Y-", Math.PI],
     ];
-    const labelColors = ["#ff4444", "#44ff44", "#ff4444", "#44ff44"];
+    const labelColors = ["--scene-axis-x", "--scene-axis-y", "--scene-axis-x", "--scene-axis-y"].map((name) =>
+        getCssVar(name),
+    );
     for (let i = 0; i < labels.length; i++) {
         const [text, angle] = labels[i];
         ctx.fillStyle = labelColors[i];
@@ -949,7 +1184,6 @@ function animate() {
     updateQuadAttitude();
     updateLiveMagOverlay();
     updateFieldReferenceArrow();
-    updateCoverageZones();
 
     if (renderer && scene && camera) {
         renderer.render(scene, camera);
@@ -975,36 +1209,25 @@ function onResize() {
     updateActiveViz(props.samples);
 }
 
-function addAxisLine(targetScene, from, to, color) {
+function addAxisLine(
+    targetScene: THREE.Scene,
+    from: THREE.Vector3,
+    to: THREE.Vector3,
+    color: THREE.ColorRepresentation,
+    opacity = 0.5,
+) {
     const geometry = new THREE.BufferGeometry().setFromPoints([from, to]);
-    const material = new THREE.LineBasicMaterial({ color, opacity: 0.5, transparent: true });
-    targetScene.add(new THREE.Line(geometry, material));
+    const material = new THREE.LineBasicMaterial({ color, opacity, transparent: opacity < 1, depthTest: false });
+    const line = new THREE.Line(geometry, material);
+    line.renderOrder = 1;
+    targetScene.add(line);
 }
 
-function addAxisLabel(targetScene, text, position, color) {
-    const canvas = document.createElement("canvas");
-    canvas.width = 64;
-    canvas.height = 64;
-    const ctx = canvas.getContext("2d");
-    ctx.fillStyle = `#${color.toString(16).padStart(6, "0")}`;
-    ctx.font = "bold 48px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(text, 32, 32);
-
-    const texture = new THREE.CanvasTexture(canvas);
-    const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true });
-    const sprite = new THREE.Sprite(spriteMaterial);
-    sprite.position.copy(position);
-    sprite.scale.set(80, 80, 1);
-    targetScene.add(sprite);
-}
-
-function createQuadIcon(size) {
+function createQuadIcon(size: number) {
     const group = new THREE.Group();
     const armMat = new THREE.MeshBasicMaterial({ color: 0xcccccc });
-    const motorFrontMat = new THREE.MeshBasicMaterial({ color: 0xff4444 });
-    const motorRearMat = new THREE.MeshBasicMaterial({ color: 0x444444 });
+    const motorFrontMat = new THREE.MeshBasicMaterial({ color: 0x44ff44 });
+    const motorRearMat = new THREE.MeshBasicMaterial({ color: 0xff4444 });
 
     // Two crossed arms (X shape in XY plane, Z=up)
     const armLen = size * 1.4;
@@ -1053,7 +1276,7 @@ function createQuadIcon(size) {
     return group;
 }
 
-function createGhostSphere(radius) {
+function createGhostSphere(radius: number) {
     const group = new THREE.Group();
     const ringMat = new THREE.LineBasicMaterial({
         color: 0x4488aa,
@@ -1101,7 +1324,7 @@ function createGhostSphere(radius) {
 // East  = -Y (display) — BF +Y (right of quad when facing North).
 // Cardinal markers represent magnetic north, not geographic north.
 // The compass ring is not rotated by declination.
-function createCompassRing(radius) {
+function createCompassRing(radius: number) {
     const group = new THREE.Group();
 
     // Thin equatorial circle at Z=0
@@ -1116,11 +1339,11 @@ function createCompassRing(radius) {
     group.add(new THREE.Line(ringGeo, ringMat));
 
     // Helper: canvas-texture sprite for a compass label
-    const makeLabel = (text, color) => {
+    const makeLabel = (text: string, color: string) => {
         const cv = document.createElement("canvas");
         cv.width = 128;
         cv.height = 128;
-        const ctx = cv.getContext("2d");
+        const ctx = context2D(cv);
         ctx.fillStyle = color;
         ctx.font = "bold 96px sans-serif";
         ctx.textAlign = "center";
@@ -1134,19 +1357,21 @@ function createCompassRing(radius) {
         return sprite;
     };
 
-    const r = radius + 60;
-    // N highlighted red (navigation convention); E/S/W neutral
-    makeLabel("N", "#ff4444").position.set(r, 0, 0);
-    makeLabel("S", "#aabbcc").position.set(-r, 0, 0);
-    // Display -Y = BF +Y = East when the quad nose faces North
-    makeLabel("E", "#aabbcc").position.set(0, -r, 0);
-    makeLabel("W", "#aabbcc").position.set(0, r, 0);
+    // Place labels just outside the sphere surface (5% past edge)
+    const r = radius * 1.05;
+    // Compass markers in the scene's NED frame: North=+X, East=+Y.
+    // N/S are on ±X — the fixed axis of the Rx180 adapter — so unchanged.
+    makeLabel("N", getCssVar("--scene-axis-x")).position.set(r, 0, 0);
+    makeLabel("S", getCssVar("--scene-compass")).position.set(-r, 0, 0);
+    // E/W are on ±Y, which the Rx180 adapter negates; with it in place East is +Y.
+    makeLabel("E", getCssVar("--scene-compass")).position.set(0, r, 0);
+    makeLabel("W", getCssVar("--scene-compass")).position.set(0, -r, 0);
 
     return group;
 }
 
-function updatePoints(sampleList) {
-    if (!positionAttr || !colorAttr) {
+function updatePoints(sampleList: MagSample[]) {
+    if (!positionAttr || !colorAttr || !pointGeometry) {
         return;
     }
 
@@ -1155,16 +1380,40 @@ function updatePoints(sampleList) {
     const positions = positionAttr.array;
     const colors = colorAttr.array;
 
+    // Recompute average and max field strength from all visible samples
+    let newMax = 0;
+    let sum = 0;
     for (let i = 0; i < count; i++) {
         const s = sampleList[start + i];
+        const f = Math.hypot(s.x, s.y, s.z);
+        sum += f;
+        if (f > newMax) {
+            newMax = f;
+        }
+    }
+    fieldStrengthSum = sum;
+    fieldStrengthCount = count;
+    if (newMax > maxFieldStrength * 1.02 || maxFieldStrength === 0) {
+        maxFieldStrength = newMax;
+    }
+    repositionCalOffsetMarker();
+
+    // Only render dots that have captured nose directions
+    const dirCount = Math.floor(noseDirections.length / 3);
+    const renderCount = Math.min(count, Math.max(0, dirCount - start));
+
+    for (let i = 0; i < renderCount; i++) {
+        const s = sampleList[start + i];
         const idx = i * 3;
-        const [sx, sy, sz] = bfToScene(s.x, s.y, s.z);
-        positions[idx] = sx;
-        positions[idx + 1] = sy;
-        positions[idx + 2] = sz;
+        const dIdx = (start + i) * 3;
+        const totalField = Math.hypot(s.x, s.y, s.z);
+        const r = totalField * magScale();
+        positions[idx] = noseDirections[dIdx] * r;
+        positions[idx + 1] = noseDirections[dIdx + 1] * r;
+        positions[idx + 2] = noseDirections[dIdx + 2] * r;
 
         // Color gradient: blue (old) → cyan → green → yellow → red (new)
-        const t = count > 1 ? i / (count - 1) : 0;
+        const t = renderCount > 1 ? i / (renderCount - 1) : 0;
         const hue = (1 - t) * 0.65; // 0.65=blue → 0=red
         _tempColor.setHSL(hue, 1, 0.5);
         colors[idx] = _tempColor.r;
@@ -1174,11 +1423,11 @@ function updatePoints(sampleList) {
 
     positionAttr.needsUpdate = true;
     colorAttr.needsUpdate = true;
-    pointGeometry.setDrawRange(0, count);
+    pointGeometry.setDrawRange(0, renderCount);
     pointGeometry.computeBoundingSphere();
 }
 
-function disposeMesh(mesh, removeFromScene = false) {
+function disposeMesh(mesh: THREE.Mesh | THREE.LineSegments | null, removeFromScene = false) {
     if (!mesh) {
         return;
     }
@@ -1186,21 +1435,15 @@ function disposeMesh(mesh, removeFromScene = false) {
         scene?.remove(mesh);
     }
     mesh.geometry?.dispose();
-    mesh.material?.dispose();
+    materialsOf(mesh).forEach((material) => material.dispose());
 }
 
-function updateWireframe(fit) {
-    disposeMesh(wireframeMesh, true);
-    wireframeMesh = null;
-    disposeMesh(centerMarker, true);
-    centerMarker = null;
-
-    if (!fit || !scene) {
+function ensureWireframe() {
+    if (wireframeMesh || !scene) {
         return;
     }
 
-    // Wireframe sphere at fitted center/radius
-    const sphereGeo = new THREE.SphereGeometry(fit.radius, 24, 16);
+    const sphereGeo = new THREE.SphereGeometry(DEFAULT_SPHERE_RADIUS, 24, 16);
     const wireGeo = new THREE.WireframeGeometry(sphereGeo);
     const wireMat = new THREE.LineBasicMaterial({
         color: 0x44aaff,
@@ -1208,17 +1451,9 @@ function updateWireframe(fit) {
         transparent: true,
     });
     wireframeMesh = new THREE.LineSegments(wireGeo, wireMat);
-    const [cx, cy, cz] = bfToScene(fit.center.x, fit.center.y, fit.center.z);
-    wireframeMesh.position.set(cx, cy, cz);
+    wireframeMesh.position.set(0, 0, 0);
     scene.add(wireframeMesh);
     sphereGeo.dispose();
-
-    // Center marker (small sphere)
-    const markerGeo = new THREE.SphereGeometry(fit.radius * 0.03, 8, 8);
-    const markerMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
-    centerMarker = new THREE.Mesh(markerGeo, markerMat);
-    centerMarker.position.set(cx, cy, cz);
-    scene.add(centerMarker);
 }
 
 function disposeScene() {
@@ -1240,28 +1475,22 @@ function disposeScene() {
     disposeGroup(fieldRefGroup);
     fieldRefGroup = null;
 
-    disposeMesh(totalVectorLine);
-    totalVectorLine = null;
-
-    if (zoneMeshes) {
-        zoneMeshes.forEach(disposeMesh);
-        zoneMeshes = null;
-    }
-
     disposeMesh(wireframeMesh);
     wireframeMesh = null;
-    disposeMesh(centerMarker);
-    centerMarker = null;
-    disposeMesh(liveMarker);
-    liveMarker = null;
 
-    if (vectorLines) {
-        vectorLines.forEach(disposeMesh);
-        vectorLines = null;
-    }
+    disposeMesh(sphereCenterMarker);
+    sphereCenterMarker = null;
 
+    disposeMesh(calOffsetMarker);
+    calOffsetMarker = null;
+
+    // liveMarker and vectorLines are children of quadIcon — disposed by disposeGroup
     disposeGroup(quadIcon);
     quadIcon = null;
+    liveMarker = null;
+    vectorLines = null;
+    smoothQuatInitialized = false;
+    noseDirections = [];
 
     disposeGroup(ghostGroup);
     ghostGroup = null;
@@ -1270,8 +1499,8 @@ function disposeScene() {
     compassGroup = null;
 
     if (pointMesh) {
-        pointGeometry.dispose();
-        pointMaterial.dispose();
+        pointGeometry?.dispose();
+        pointMaterial?.dispose();
         pointMesh = null;
         pointGeometry = null;
         pointMaterial = null;
@@ -1285,18 +1514,8 @@ function disposeScene() {
     // Dispose remaining scene resources (axis lines, labels, sprites)
     if (scene) {
         scene.traverse((obj) => {
-            if (obj.geometry) {
-                obj.geometry.dispose();
-            }
-            if (obj.material) {
-                const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-                for (const m of mats) {
-                    if (m.map) {
-                        m.map.dispose();
-                    }
-                    m.dispose();
-                }
-            }
+            geometryOf(obj)?.dispose();
+            materialsOf(obj).forEach(disposeMaterial);
         });
     }
 
@@ -1309,30 +1528,30 @@ function disposeScene() {
     camera = null;
 }
 
-function setVisible(obj, visible) {
+function setVisible(obj: THREE.Object3D | null, visible: boolean) {
     if (obj) {
         obj.visible = visible;
     }
 }
 
-function setSceneObjectVisibility(pc, hm) {
+function setSceneObjectVisibility(pc: boolean, hm: boolean) {
     setVisible(pointMesh, pc);
     setVisible(wireframeMesh, pc || hm);
-    setVisible(centerMarker, pc || hm);
     setVisible(liveMarker, pc && props.active);
+    setVisible(noseLine, pc && props.active);
     vectorLines?.forEach((v) => {
         v.visible = pc && props.active;
     });
-    setVisible(totalVectorLine, pc && props.active);
-    setVisible(fieldRefGroup, pc || hm);
-    zoneMeshes?.forEach((z) => {
-        z.visible = pc;
-    });
+    setVisible(sphereCenterMarker, (pc || hm) && !!props.sphereFit);
+    const hasNonZeroCalOffsets =
+        !!props.calOffsets && (props.calOffsets.x !== 0 || props.calOffsets.y !== 0 || props.calOffsets.z !== 0);
+    setVisible(calOffsetMarker, (pc || hm) && hasNonZeroCalOffsets);
+    setVisible(fieldRefGroup, (pc || hm) && props.inclination !== null);
     setVisible(heatmapMesh, hm);
     setVisible(compassGroup, pc || hm);
 }
 
-function applyVizMode(mode) {
+function applyVizMode(mode: MagVizMode) {
     const pc = mode === "pointcloud";
     const hm = mode === "heatmap";
 
@@ -1343,7 +1562,7 @@ function applyVizMode(mode) {
     updateActiveViz(props.samples);
 }
 
-function updateActiveViz(sampleList) {
+function updateActiveViz(sampleList: MagSample[]) {
     if (props.vizMode === "heatmap") {
         updateHeatmap(sampleList);
     } else if (props.vizMode === "projection") {
@@ -1354,11 +1573,18 @@ function updateActiveViz(sampleList) {
 }
 
 // Watchers
-// Watch samples.length — the composable mutates the array in place via push() + triggerRef(),
-// so the array reference never changes; watching length detects new samples.
+// sampleCount is a primitive prop (number) so Vue detects changes reliably,
+// unlike samples.length which doesn't update when the array is mutated in place.
 watch(
-    () => props.samples.length,
-    () => {
+    () => props.sampleCount,
+    (count) => {
+        if (count === 0) {
+            maxFieldStrength = 0;
+            fieldStrengthSum = 0;
+            fieldStrengthCount = 0;
+            noseDirections = [];
+        }
+        ensureWireframe();
         updatePoints(props.samples);
         updateActiveViz(props.samples);
     },
@@ -1367,10 +1593,29 @@ watch(
 watch(
     () => props.sphereFit,
     (val) => {
-        updateWireframe(val);
+        ensureWireframe();
         rebuildFieldReference();
         updateActiveViz(props.samples);
+        if (sphereCenterMarker) {
+            sphereCenterMarker.position.set(0, 0, 0);
+            sphereCenterMarker.visible = !!val;
+        }
     },
+);
+
+watch(
+    () => props.calOffsets,
+    (offsets) => {
+        if (!calOffsetMarker) {
+            return;
+        }
+        if (offsets && (offsets.x !== 0 || offsets.y !== 0 || offsets.z !== 0) && maxFieldStrength > 0) {
+            repositionCalOffsetMarker();
+        } else {
+            calOffsetMarker.visible = false;
+        }
+    },
+    { immediate: true },
 );
 
 watch(
@@ -1388,9 +1633,18 @@ onMounted(() => {
     // Hydrate scene from current props — the results-screen instance mounts
     // with precomputed data that won't trigger the watchers.
     updatePoints(props.samples);
-    updateWireframe(props.sphereFit);
+    ensureWireframe();
     rebuildFieldReference();
     applyVizMode(props.vizMode);
+    // Hydrate calOffsetMarker — the immediate watcher ran before initScene created it
+    if (calOffsetMarker && props.calOffsets) {
+        const offsets = props.calOffsets;
+        if (offsets.x !== 0 || offsets.y !== 0 || offsets.z !== 0) {
+            const s = magScale();
+            calOffsetMarker.position.set(offsets.x * s, -offsets.y * s, offsets.z * s);
+            calOffsetMarker.visible = true;
+        }
+    }
 });
 
 onBeforeUnmount(() => {
@@ -1398,67 +1652,94 @@ onBeforeUnmount(() => {
 });
 </script>
 
-<style scoped>
+<style lang="less">
 .mag-sphere-container {
     width: 100%;
     height: 100%;
     min-height: 300px;
     position: relative;
-}
 
-.mag-sphere-container canvas {
-    display: block;
-    width: 100% !important;
-    height: 100% !important;
-}
+    & canvas {
+        display: block;
+        width: 100% !important;
+        height: 100% !important;
+    }
 
-.mag-sphere-proj-canvas {
-    position: absolute;
-    inset: 0;
-    z-index: 2;
-    pointer-events: none;
-}
+    .mag-sphere-proj-canvas {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        pointer-events: none;
+    }
 
-.mag-sphere-axis-legend {
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    display: flex;
-    gap: 8px;
-    font-size: 0.75em;
-    font-weight: bold;
-    pointer-events: none;
-}
+    .mag-sphere-axis-legend {
+        position: absolute;
+        top: 6px;
+        inset-inline-end: 6px;
+        display: flex;
+        gap: 8px;
+        font-size: 0.75em;
+        font-weight: bold;
+        pointer-events: none;
+    }
 
-.mag-sphere-axis-legend .axis-x {
-    color: #ff4444;
-}
+    .mag-sphere-axis-legend .axis-x {
+        color: var(--scene-axis-x);
+    }
 
-.mag-sphere-axis-legend .axis-y {
-    color: #44ff44;
-}
+    .mag-sphere-axis-legend .axis-y {
+        color: var(--scene-axis-y);
+    }
 
-.mag-sphere-axis-legend .axis-z {
-    color: #4444ff;
-}
+    .mag-sphere-axis-legend .axis-z {
+        color: var(--scene-axis-z);
+    }
 
-.mag-sphere-axis-legend .axis-field {
-    color: #ff8800;
-}
+    .mag-sphere-axis-legend .axis-field {
+        color: var(--scene-field);
+    }
 
-.mag-sphere-axis-legend .axis-incl {
-    color: #ff8800;
-    opacity: 0.7;
-}
+    .mag-sphere-axis-legend .axis-incl {
+        color: var(--scene-field);
+        opacity: 0.7;
+    }
 
-.mag-sphere-legend {
-    position: absolute;
-    bottom: 6px;
-    left: 6px;
-    right: 6px;
-    font-size: 0.7em;
-    color: rgba(255, 255, 255, 0.5);
-    pointer-events: none;
-    line-height: 1.3;
+    .mag-sphere-age-legend {
+        position: absolute;
+        top: 26px;
+        inset-inline-end: 6px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 0.65em;
+        color: rgba(255, 255, 255, 0.6);
+        pointer-events: none;
+    }
+
+    .mag-sphere-age-legend .age-gradient {
+        display: inline-block;
+        width: 48px;
+        height: 6px;
+        border-radius: 3px;
+        background: linear-gradient(
+            to right,
+            hsl(234, 100%, 50%),
+            hsl(180, 100%, 50%),
+            hsl(120, 100%, 50%),
+            hsl(60, 100%, 50%),
+            hsl(0, 100%, 50%)
+        );
+    }
+
+    .mag-sphere-legend {
+        position: absolute;
+        bottom: 6px;
+        inset-inline-start: 6px;
+        inset-inline-end: 6px;
+        font-size: 0.7em;
+        color: rgba(255, 255, 255, 0.5);
+        pointer-events: none;
+        line-height: 1.3;
+    }
 }
 </style>

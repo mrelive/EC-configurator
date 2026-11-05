@@ -67,15 +67,13 @@
     </dialog>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from "vue";
 import { useFlightControllerStore } from "@/stores/fc";
 import MotorOutputReorderCanvas from "@/components/MotorOutputReordering/MotorOutputReorderingCanvas";
 import MotorOutputReorderConfig from "@/components/MotorOutputReordering/MotorOutputReorderingConfig";
-import { mspHelper } from "@/js/msp/MSPHelper";
-import MSP from "@/js/msp";
-import MSPCodes from "@/js/msp/MSPCodes";
 import { i18n } from "@/js/localization";
+import { useMotorOutputReordering } from "@/composables/motors/useMotorOutputReordering";
 
 const props = defineProps({
     droneConfiguration: {
@@ -92,11 +90,12 @@ const props = defineProps({
     },
 });
 
-const emit = defineEmits(["close"]);
+const emit = defineEmits<{ close: [] }>();
 
 const fcStore = useFlightControllerStore();
-const dialogRef = ref(null);
-const canvasRef = ref(null);
+const { spinOnlyMotor, saveMotorOutputOrder } = useMotorOutputReordering();
+const dialogRef = ref<HTMLDialogElement | null>(null);
+const canvasRef = ref<HTMLCanvasElement | null>(null);
 
 // State
 const safetyAgreed = ref(false);
@@ -105,44 +104,34 @@ const showSaveButtons = ref(false);
 const actionHintText = ref("");
 
 // Motor jerking state
-let currentJerkingTimeout = -1;
+let currentJerkingTimeout: ReturnType<typeof setTimeout> | -1 = -1;
 let currentJerkingMotor = -1;
 let currentSpinningMotor = -1;
 
 // Canvas instance
-let motorOutputReorderCanvas = null;
-let config = null;
+let motorOutputReorderCanvas: MotorOutputReorderCanvas | null = null;
+// Only the motor count is read from it, so the drawing scale does not matter.
+const config = new MotorOutputReorderConfig(100);
 
 // New motor output order
-let newMotorOutputReorder = [];
+let newMotorOutputReorder: number[] = [];
 
 // Constants
 const JERKING_SPIN_DURATION = 250;
 const JERKING_PAUSE_DURATION = 500;
 
 // Translation helper
-const i18nMessage = (key) => {
+const i18nMessage = (key: string) => {
     return i18n.getMessage(key);
 };
 
-// Initialize config
-const initializeConfig = () => {
-    config = new MotorOutputReorderConfig(100);
-};
-
 // Motor spinning
-const spinMotor = (motorIndex) => {
+const spinMotor = (motorIndex: number) => {
     currentSpinningMotor = motorIndex;
-    const buffer = [];
 
-    const numberOfMotors = config[props.droneConfiguration].Motors.length;
+    const numberOfMotors = config.frames[props.droneConfiguration].Motors.length;
 
-    for (let i = 0; i < numberOfMotors; i++) {
-        const value = i === motorIndex ? props.motorSpinValue : props.motorStopValue;
-        buffer.push(value & 0xff, (value >> 8) & 0xff);
-    }
-
-    MSP.send_message(MSPCodes.MSP_SET_MOTOR, buffer);
+    spinOnlyMotor(motorIndex, numberOfMotors, props.motorSpinValue, props.motorStopValue);
 };
 
 const stopMotor = () => {
@@ -161,28 +150,28 @@ const stopAnyMotorJerking = () => {
     currentJerkingMotor = -1;
 };
 
-const motorStartTimeout = (motorIndex) => {
+const motorStartTimeout = (motorIndex: number) => {
     spinMotor(motorIndex);
     currentJerkingTimeout = setTimeout(() => {
         motorStopTimeout(motorIndex);
     }, JERKING_SPIN_DURATION);
 };
 
-const motorStopTimeout = (motorIndex) => {
+const motorStopTimeout = (motorIndex: number) => {
     spinMotor(-1);
     currentJerkingTimeout = setTimeout(() => {
         motorStartTimeout(motorIndex);
     }, JERKING_PAUSE_DURATION);
 };
 
-const startMotorJerking = (motorIndex) => {
+const startMotorJerking = (motorIndex: number) => {
     stopAnyMotorJerking();
     currentJerkingMotor = motorIndex;
     motorStartTimeout(motorIndex);
 };
 
 // Motor click callback
-const onMotorClick = (motorIndex) => {
+const onMotorClick = (motorIndex: number) => {
     if (!motorOutputReorderCanvas) {
         return;
     }
@@ -190,7 +179,7 @@ const onMotorClick = (motorIndex) => {
     motorOutputReorderCanvas.readyMotors.push(motorIndex);
     currentJerkingMotor++;
 
-    const numberOfMotors = config[props.droneConfiguration].Motors.length;
+    const numberOfMotors = config.frames[props.droneConfiguration].Motors.length;
 
     if (currentJerkingMotor < numberOfMotors) {
         startMotorJerking(currentJerkingMotor);
@@ -204,7 +193,7 @@ const onMotorClick = (motorIndex) => {
 };
 
 // Motor spin callback (for user testing after remapping)
-const spinMotorCallback = (motorIndex) => {
+const spinMotorCallback = (motorIndex: number) => {
     let indexToSpin = -1;
 
     if (motorIndex !== -1 && motorOutputReorderCanvas) {
@@ -227,7 +216,7 @@ const calculateNewMotorOutputReorder = () => {
     }
 };
 
-const remapMotorIndex = (motorIndex) => {
+const remapMotorIndex = (motorIndex: number) => {
     if (!motorOutputReorderCanvas) {
         return motorIndex;
     }
@@ -245,7 +234,10 @@ const startUserInteraction = () => {
     if (motorOutputReorderCanvas) {
         motorOutputReorderCanvas.startOver();
     } else {
-        // Initialize canvas
+        // The canvas is rendered by showMainContent, which the callers set first.
+        if (!canvasRef.value) {
+            return;
+        }
         motorOutputReorderCanvas = new MotorOutputReorderCanvas(
             canvasRef.value,
             props.droneConfiguration,
@@ -272,14 +264,7 @@ const startOver = () => {
 };
 
 const save = () => {
-    fcStore.motorOutputOrder = Array.from(newMotorOutputReorder);
-
-    MSP.send_message(
-        MSPCodes.MSP2_SET_MOTOR_OUTPUT_REORDERING,
-        mspHelper.crunch(MSPCodes.MSP2_SET_MOTOR_OUTPUT_REORDERING),
-        false,
-        () => mspHelper.writeConfiguration(true),
-    );
+    saveMotorOutputOrder(newMotorOutputReorder);
 
     close();
 };
@@ -316,7 +301,7 @@ const cleanup = () => {
 };
 
 // Handle ESC key and emergency stop on any key
-const handleKeyDown = (e) => {
+const handleKeyDown = (e: KeyboardEvent) => {
     // Only handle keydown when dialog is open
     if (!dialogRef.value?.open) {
         return;
@@ -331,7 +316,7 @@ const handleKeyDown = (e) => {
 };
 
 // Handle dialog cancel (backdrop click, ESC)
-const handleCancel = (e) => {
+const handleCancel = (e: Event) => {
     e.preventDefault();
     cleanup();
     close();
@@ -339,8 +324,6 @@ const handleCancel = (e) => {
 
 // Lifecycle
 onMounted(async () => {
-    initializeConfig();
-
     document.addEventListener("keydown", handleKeyDown);
 });
 
@@ -356,7 +339,7 @@ defineExpose({
 });
 </script>
 
-<style scoped>
+<style lang="less">
 @import "@/components/MotorOutputReordering/Styles.css";
 
 .motorOutputReordering-dialog {
@@ -369,27 +352,27 @@ defineExpose({
     color: var(--text);
     padding: 20px;
     overflow-y: auto;
-}
 
-.motorOutputReordering-dialog::backdrop {
-    background-color: rgba(0, 0, 0, 0.9); /* More opaque backdrop */
-}
+    &::backdrop {
+        background-color: rgba(0, 0, 0, 0.9); /* More opaque backdrop */
+    }
 
-.componentContent {
-    margin-top: 15px;
-}
+    .componentContent {
+        margin-top: 15px;
+    }
 
-.buttons {
-    margin-top: 20px;
-    text-align: center;
-}
+    .buttons {
+        margin-top: 20px;
+        text-align: center;
+    }
 
-.regular-button {
-    margin: 5px;
-    cursor: pointer;
-}
+    .regular-button {
+        margin: 5px;
+        cursor: pointer;
+    }
 
-.regular-button.left {
-    margin-right: 10px;
+    .regular-button.left {
+        margin-inline-end: 10px;
+    }
 }
 </style>

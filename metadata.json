@@ -1,0 +1,5 @@
+{
+    "name": "ECHO CORP FC Configurator",
+    "description": "Crossplatform configuration and management application for ECHO CORP flight controller workflows.",
+    "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

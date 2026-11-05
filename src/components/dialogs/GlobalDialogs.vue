@@ -9,9 +9,9 @@
     </div>
 </template>
 
-<script setup>
-import { useDialogStore } from "@/stores/dialog";
-import { ref, watch, nextTick } from "vue";
+<script setup lang="ts">
+import { useDialogStore, type DialogType } from "@/stores/dialog";
+import { ref, watch, nextTick, type Component } from "vue";
 import YesNoDialog from "./YesNoDialog.vue";
 import InformationDialog from "./InformationDialog.vue";
 import WaitDialog from "./WaitDialog.vue";
@@ -23,9 +23,15 @@ import RatesTypeDialog from "./RatesTypeDialog.vue";
 import CopyProfileDialog from "./CopyProfileDialog.vue";
 import ReportProblemsDialog from "./ReportProblemsDialog.vue";
 import InteractiveDialog from "./InteractiveDialog.vue";
+import BoardAlignmentWizardDialog from "./BoardAlignmentWizardDialog.vue";
 
 const dialogStore = useDialogStore();
-const currentDialogRef = ref(null);
+interface DialogExposed {
+    show?: () => void;
+    dialog?: HTMLDialogElement;
+}
+
+const currentDialogRef = ref<DialogExposed | null>(null);
 
 const dialogComponents = {
     YesNoDialog,
@@ -39,7 +45,8 @@ const dialogComponents = {
     CopyProfileDialog,
     ReportProblemsDialog,
     InteractiveDialog,
-};
+    BoardAlignmentWizardDialog,
+} satisfies Record<DialogType, Component>;
 
 watch(
     () => dialogStore.activeDialog,

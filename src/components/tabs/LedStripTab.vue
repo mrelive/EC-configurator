@@ -1,8 +1,8 @@
 <template>
     <BaseTab tab-name="led-strip" @mounted="onTabMounted">
-        <div class="content_wrapper">
+        <div class="content_wrapper" @keydown.esc="handleEscapeKey">
             <div class="tab_title" v-html="$t('tabLedStrip')"></div>
-            <WikiButton doc-url="led-strip" />
+            <WikiButton docUrl="led_strip" />
 
             <UiBox highlight class="mb-3">
                 <p v-html="$t('ledStripHelp')"></p>
@@ -39,7 +39,7 @@
                     <div class="clear-buttons-container">
                         <!-- Clear Buttons -->
                         <UButton
-                            size="sm"
+                            size="xs"
                             color="neutral"
                             variant="soft"
                             :disabled="!hasSelection"
@@ -47,7 +47,7 @@
                             @click="clearSelected"
                         />
                         <UButton
-                            size="sm"
+                            size="xs"
                             color="error"
                             variant="soft"
                             :label="$t('ledStripClearAllButton')"
@@ -63,7 +63,7 @@
                     <USelect
                         id="ledStripFunctionSelect"
                         :class="['functionSelect', 'min-w-48', selectedFunction]"
-                        size="sm"
+                        size="xs"
                         :items="functionItems"
                         v-model="selectedFunction"
                         @update:model-value="onFunctionChange"
@@ -77,7 +77,6 @@
                     <div class="modifier-row">
                         <USwitch
                             id="throttleHue"
-                            size="sm"
                             v-model="modifiers.throttleHue"
                             @update:model-value="onModifierChange('t')"
                             :label="$t('ledStripThrottleHue')"
@@ -85,7 +84,7 @@
                         <USelect
                             id="auxSelectThrottle"
                             class="auxSelect"
-                            size="sm"
+                            size="xs"
                             :items="auxChannelItems"
                             v-model="auxChannelValue"
                             :aria-label="$t('ledStripThrottleHueChannel')"
@@ -95,7 +94,6 @@
                     <div class="modifier-row">
                         <USwitch
                             id="larsonScanner"
-                            size="sm"
                             v-model="modifiers.larsonScanner"
                             @update:model-value="onModifierChange('o')"
                             :label="$t('ledStripLarsonOverlay')"
@@ -105,7 +103,6 @@
                     <div class="modifier-row">
                         <USwitch
                             id="blink"
-                            size="sm"
                             v-model="modifiers.blink"
                             @update:model-value="onModifierChange('b')"
                             :label="$t('ledStripBlinkAlwaysOverlay')"
@@ -115,7 +112,6 @@
                     <div class="modifier-row rainbowOverlay" v-show="showRainbow">
                         <USwitch
                             id="rainbow"
-                            size="sm"
                             v-model="modifiers.rainbow"
                             @update:model-value="onModifierChange('y')"
                             :label="$t('ledStripRainbowOverlay')"
@@ -143,7 +139,6 @@
                     <div class="modifier-row warningOverlay" v-show="showWarning">
                         <USwitch
                             id="warnings"
-                            size="sm"
                             v-model="overlayStates.warnings"
                             @update:model-value="onOverlayChange('w')"
                             :label="$t('ledStripWarningsOverlay')"
@@ -152,7 +147,6 @@
                     <div class="modifier-row indicatorOverlay">
                         <USwitch
                             id="indicator"
-                            size="sm"
                             v-model="overlayStates.indicator"
                             @update:model-value="onOverlayChange('i')"
                             :label="$t('ledStripIndecatorOverlay')"
@@ -161,7 +155,6 @@
                     <div class="modifier-row vtxOverlay" v-show="showVtx">
                         <USwitch
                             id="vtx"
-                            size="sm"
                             v-model="overlayStates.vtx"
                             @update:model-value="onOverlayChange('v')"
                             :label="$t('ledStripVtxOverlay')"
@@ -176,7 +169,7 @@
                     <USelect
                         id="ledStripModeColorsModeSelect"
                         class="modeSelect gps min-w-48"
-                        size="sm"
+                        size="xs"
                         :items="modeColorsModeItems"
                         v-model="modeColorsMode"
                     />
@@ -197,7 +190,7 @@
                     <UButton
                         v-for="dir in directions"
                         :key="dir"
-                        size="sm"
+                        size="xs"
                         color="primary"
                         :variant="activeDirections.has(dir) ? 'solid' : 'soft'"
                         :class="'dir-' + dir"
@@ -250,14 +243,15 @@
                             <span class="colorDefineSliderValue Vvalue">{{ colorHSV.v }}</span>
                         </div>
                     </div>
+                    <!-- Color palette buttons (16 colored swatches) -->
                     <button
                         v-for="i in 16"
                         :key="`color-${i - 1}`"
                         :class="['color-' + (i - 1), { btnOn: selectedColorIndex === i - 1 }]"
                         :style="{ backgroundColor: getColorStyle(i - 1) }"
                         :title="$t(getColorTitle(i - 1))"
-                        @click="selectColor(i - 1)"
-                        @dblclick="openColorSliders($event)"
+                        @click="handleColorClick(i - 1, $event)"
+                        @dblclick="handleColorDblClick($event)"
                     >
                         {{ i - 1 }}
                     </button>
@@ -293,8 +287,7 @@
                 <div class="section" v-html="$t('ledStripWiring')"></div>
                 <div class="wiring-container">
                     <UButton
-                        block
-                        size="sm"
+                        size="xs"
                         color="primary"
                         :variant="wireMode ? 'solid' : 'soft'"
                         :label="$t('ledStripWiringMode')"
@@ -302,7 +295,7 @@
                     />
                     <div class="wiringControls">
                         <UButton
-                            size="sm"
+                            size="xs"
                             color="neutral"
                             variant="soft"
                             class="w50"
@@ -310,7 +303,7 @@
                             @click="clearWiresSelected"
                         />
                         <UButton
-                            size="sm"
+                            size="xs"
                             color="error"
                             variant="soft"
                             class="w50"
@@ -327,29 +320,31 @@
 
         <!-- Bottom Toolbar -->
         <div class="content_toolbar toolbar_fixed_bottom">
-            <UButton :label="saveButtonText" @click="save" />
+            <UButton size="xs" :label="saveButtonText" :disabled="!dirty" :loading="isSaving" @click="save" />
         </div>
     </BaseTab>
 </template>
 
-<script setup>
-import { ref, reactive, computed, watch } from "vue";
+<script setup lang="ts">
+import { ref, reactive, computed, watch, onBeforeUnmount } from "vue";
 import BaseTab from "./BaseTab.vue";
 import WikiButton from "../elements/WikiButton.vue";
 import LedGrid from "./led_strip/LedGrid.vue";
 import HelpIcon from "../elements/HelpIcon.vue";
-import { useLedStrip } from "@/composables/useLedStrip";
+import { useLedStrip, type LedGridCell, type LedModeColorSelection } from "@/composables/useLedStrip";
+import { useSaving } from "@/composables/useSaving";
+import { useDirtyState } from "@/composables/useDirtyState";
+import { useTransientLabel } from "@/composables/useTransientLabel";
+import { runTabLoad } from "@/composables/useTabLoad";
 import { i18n } from "@/js/localization";
-import { gui_log } from "@/js/gui_log";
-import GUI from "@/js/gui";
 import semver from "semver";
-import FC from "@/js/fc";
+import { useFlightControllerStore } from "@/stores/fc";
 import { API_VERSION_1_46 } from "@/js/data_storage";
 import UiBox from "../elements/UiBox.vue";
 
 // Decode HTML entities in translations (some use &amp; etc) so plain-text
 // component props (e.g. USelect item labels) render correctly.
-function decodeHtmlEntities(text) {
+function decodeHtmlEntities(text: string) {
     if (!text) {
         return text;
     }
@@ -357,7 +352,8 @@ function decodeHtmlEntities(text) {
     textarea.innerHTML = text;
     return textarea.value;
 }
-const t = (key) => decodeHtmlEntities(i18n.getMessage(key));
+const t = (key: string) => decodeHtmlEntities(i18n.getMessage(key));
+const fcStore = useFlightControllerStore();
 
 const {
     wireMode,
@@ -383,7 +379,7 @@ const {
 
 // Grid state (256 LEDs in 16x16 grid)
 const gridLeds = reactive(
-    Array.from({ length: 256 }, () => ({
+    Array.from({ length: 256 }, (): LedGridCell & { overlays: Record<string, never> } => ({
         wireNumber: "",
         functions: [],
         directions: [],
@@ -393,7 +389,7 @@ const gridLeds = reactive(
 );
 
 // Selection state
-const selectedIndices = ref(new Set());
+const selectedIndices = ref(new Set<number>());
 const selectedFunction = ref("none");
 const selectedColorIndex = ref(0);
 
@@ -413,23 +409,52 @@ const overlayStates = reactive({
 });
 
 // Other state
-const activeDirections = ref(new Set());
+const activeDirections = ref(new Set<string>());
 const modeColorsMode = ref(0);
-const selectedModeColor = ref(null);
+const selectedModeColor = ref<LedModeColorSelection | null>(null);
 const auxChannelValue = ref("3");
-const colorDefineSliders = ref(null);
+const colorDefineSliders = ref<HTMLElement | null>(null);
 const colorHSV = reactive({ h: 0, s: 0, v: 0 });
-const saveButtonText = ref(i18n.getMessage("ledStripButtonSave"));
+const { label: transientSaveButtonText, flash: flashSaveButtonText } = useTransientLabel(
+    i18n.getMessage("ledStripButtonSave"),
+);
+const saveButtonText = computed(() => transientSaveButtonText.value);
+const { isSaving, runSave } = useSaving();
+
+// Color setup popup state
+const isColorSlidersOpen = ref(false);
 
 // Sliders
 const brightness = ref(50);
 const rainbowDelta = ref(0);
 const rainbowFreq = ref(1);
 
+// Snapshot the grid, not fcStore.ledStrip: the strip is rebuilt from the grid on every edit, and
+// initializeGrid drops placeholder LEDs that the rebuild writes back differently, so a
+// strip-based snapshot would flag an edit that changed nothing. The brightness/rainbow sliders
+// go to the FC live but only reach EEPROM on Save, so they are unsaved work too.
+/** @returns {string} serialized tab state for dirty comparison */
+const serializeLedState = () =>
+    JSON.stringify({
+        grid: gridLeds.map((led) => ({
+            wireNumber: led.wireNumber,
+            functions: [...led.functions],
+            directions: [...led.directions],
+            colorIndex: led.colorIndex,
+        })),
+        colors: (ledColors.value || []).map(({ h, s, v }) => ({ h, s, v })),
+        modeColors: (fcStore.ledModeColors || []).map(({ mode, direction, color }) => ({ mode, direction, color })),
+        brightness: brightness.value,
+        rainbowDelta: rainbowDelta.value,
+        rainbowFreq: rainbowFreq.value,
+    });
+
+const { dirty, markClean, takeSnapshot } = useDirtyState(serializeLedState);
+
 // Computed properties
 const wiresRemaining = computed(() => {
     const usedCount = gridLeds.filter((led) => led.wireNumber !== "").length;
-    return FC.LED_STRIP.length - usedCount;
+    return fcStore.ledStrip.length - usedCount;
 });
 
 const hasSelection = computed(() => selectedIndices.value.size > 0);
@@ -440,7 +465,7 @@ const showRainbow = computed(() => isRainbowActive(selectedFunction.value));
 const showWarning = computed(() => isWarningActive(selectedFunction.value));
 const showVtx = computed(() => isVtxActive(selectedFunction.value));
 const showModeColors = computed(() => selectedFunction.value === "function-f");
-const showBrightness = computed(() => semver.gte(FC.CONFIG.apiVersion, API_VERSION_1_46));
+const showBrightness = computed(() => semver.gte(fcStore.config.apiVersion, API_VERSION_1_46));
 
 const showSpecialColors = computed(() => {
     const func = selectedFunction.value;
@@ -540,13 +565,39 @@ const specialColorButtons = computed(() => [
 
 // Lifecycle
 const onTabMounted = async () => {
-    try {
-        await loadData();
-        initializeGrid();
-        loadConfigValues();
-        GUI.content_ready();
-    } catch (error) {
-        console.error("Failed to load LED strip data:", error);
+    await runTabLoad(
+        async () => {
+            await loadData();
+            initializeGrid();
+            loadConfigValues();
+            markClean();
+        },
+        (error) => console.error("Failed to load LED strip data:", error),
+    );
+};
+
+// Handle Escape key to close color setup popup
+const handleEscapeKey = () => {
+    if (isColorSlidersOpen.value) {
+        closeColorSliders();
+    }
+};
+
+// Clean up event listeners when tab is unmounted
+onBeforeUnmount(() => {
+    closeColorSliders();
+});
+
+// Click-outside handler for color setup popup
+const handleClickOutside = (event: MouseEvent) => {
+    const sliders = colorDefineSliders.value;
+    const target = event.target instanceof Element ? event.target : null;
+    const colorButton = target?.closest(".colors > button");
+    if (!sliders || sliders.style.display === "none" || colorButton) {
+        return;
+    }
+    if (!sliders.contains(target)) {
+        closeColorSliders();
     }
 };
 
@@ -562,7 +613,7 @@ function initializeGrid() {
     });
 
     // Populate from LED strip
-    FC.LED_STRIP.forEach((led, ledIndex) => {
+    fcStore.ledStrip.forEach((led, ledIndex) => {
         if (
             !led ||
             (led.functions[0] === "c" &&
@@ -594,7 +645,7 @@ function loadConfigValues() {
 }
 
 // Selection handlers for custom grid
-function onSelectionChange(newSelection) {
+function onSelectionChange(newSelection: Set<number>) {
     selectedIndices.value = newSelection;
 }
 
@@ -613,7 +664,7 @@ function handleSelectionComplete() {
         selectedIndices.value.forEach((index) => {
             if (gridLeds[index].wireNumber === "") {
                 const nextWire = getNextWireNumber(gridLeds);
-                if (nextWire < FC.LED_STRIP.length) {
+                if (nextWire < fcStore.ledStrip.length) {
                     gridLeds[index].wireNumber = String(nextWire);
                 }
             }
@@ -621,7 +672,10 @@ function handleSelectionComplete() {
     }
 
     // Update UI state from last selected LED
-    const lastSelected = Array.from(selectedIndices.value).pop();
+    const lastSelected = Array.from(selectedIndices.value).at(-1);
+    if (lastSelected === undefined) {
+        return;
+    }
     const led = gridLeds[lastSelected];
 
     // Update selected color
@@ -671,12 +725,8 @@ function clearSelected() {
     // Clear UI state
     selectedFunction.value = "none";
     activeDirections.value.clear();
-    Object.keys(overlayStates).forEach((key) => {
-        overlayStates[key] = false;
-    });
-    Object.keys(modifiers).forEach((key) => {
-        modifiers[key] = false;
-    });
+    clearFlags(overlayStates);
+    clearFlags(modifiers);
 
     buildLedStripFromGrid(gridLeds);
 }
@@ -692,12 +742,8 @@ function clearAll() {
     // Clear UI state
     selectedFunction.value = "none";
     activeDirections.value.clear();
-    Object.keys(overlayStates).forEach((key) => {
-        overlayStates[key] = false;
-    });
-    Object.keys(modifiers).forEach((key) => {
-        modifiers[key] = false;
-    });
+    clearFlags(overlayStates);
+    clearFlags(modifiers);
 
     // Clear selection
     selectedIndices.value = new Set();
@@ -729,7 +775,7 @@ function onFunctionChange() {
 }
 
 // Direction toggle
-function toggleDirection(dir) {
+function toggleDirection(dir: string) {
     if (selectedIndices.value.size === 0) {
         return;
     }
@@ -757,7 +803,7 @@ function toggleDirection(dir) {
 }
 
 // Modifier change
-function onModifierChange(modifier) {
+function onModifierChange(modifier: string) {
     if (selectedIndices.value.size === 0) {
         return;
     }
@@ -790,13 +836,13 @@ function onModifierChange(modifier) {
 }
 
 // Overlay change
-function onOverlayChange(overlay) {
+function onOverlayChange(overlay: string) {
     if (selectedIndices.value.size === 0) {
         return;
     }
 
     const key = getOverlayStateKey(overlay);
-    const isActive = overlayStates[key];
+    const isActive = key ? overlayStates[key] : undefined;
 
     selectedIndices.value.forEach((index) => {
         if (isActive) {
@@ -815,7 +861,7 @@ function onOverlayChange(overlay) {
 }
 
 // Color selection
-function selectColor(colorIndex) {
+function selectColor(colorIndex: number) {
     selectedColorIndex.value = colorIndex;
 
     if (selectedIndices.value.size > 0) {
@@ -833,7 +879,7 @@ function selectColor(colorIndex) {
     }
 }
 
-function updateColorSliders(colorIndex) {
+function updateColorSliders(colorIndex: number) {
     const color = ledColors.value[colorIndex];
     if (color) {
         colorHSV.h = color.h;
@@ -851,8 +897,11 @@ function onColorSliderChange() {
     }
 }
 
-function openColorSliders(event) {
+function openColorSliders(event: MouseEvent) {
     const target = event.currentTarget;
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
     const position = target.getBoundingClientRect();
     const sliders = colorDefineSliders.value;
 
@@ -871,10 +920,29 @@ function openColorSliders(event) {
         sliders.style.top = `${position.top + 26}px`;
         sliders.style.display = "block";
     }
+    isColorSlidersOpen.value = true;
+}
+
+function closeColorSliders() {
+    const sliders = colorDefineSliders.value;
+    if (sliders) {
+        sliders.style.display = "none";
+    }
+    isColorSlidersOpen.value = false;
+}
+
+function handleColorClick(colorIndex: number, event: MouseEvent) {
+    selectColor(colorIndex);
+    closeColorSliders();
+    event.stopPropagation();
+}
+
+function handleColorDblClick(event: MouseEvent) {
+    openColorSliders(event);
 }
 
 // Mode color handlers
-function handleModeColorClick(mode, direction) {
+function handleModeColorClick(mode: number, direction: number) {
     const modeColorActive = selectedModeColor.value?.mode === mode && selectedModeColor.value?.direction === direction;
 
     if (modeColorActive) {
@@ -886,18 +954,16 @@ function handleModeColorClick(mode, direction) {
     }
 }
 
-function getModeColorButtonClass(mode, direction) {
+function getModeColorButtonClass(mode: number, direction: number) {
     return `mode_color-${mode}-${direction}`;
 }
 
-function getModeColorButtonStyle(mode, direction) {
+function getModeColorButtonStyle(mode: number, direction: number) {
     const colorIndex = getModeColor(mode, direction);
-    return {
-        backgroundColor: getColorStyle(colorIndex),
-    };
+    return { backgroundColor: getColorStyle(colorIndex) };
 }
 
-function getModeColorButtonLabel(direction) {
+function getModeColorButtonLabel(direction: number) {
     const labels = ["ledStripDirN", "ledStripDirE", "ledStripDirS", "ledStripDirW", "ledStripDirU", "ledStripDirD"];
     return labels[direction] || "";
 }
@@ -934,33 +1000,37 @@ watch(rainbowFreq, (newValue) => {
     updateLedConfigValue("rainbow_freq", newValue);
 });
 
-// Save
-async function save() {
-    const saveButton = saveButtonText;
-    const oldText = i18n.getMessage("ledStripButtonSave");
+// Watch color setup popup state and set up click-outside handler
+watch(isColorSlidersOpen, (newValue) => {
+    if (newValue) {
+        document.addEventListener("mousedown", handleClickOutside);
+    } else {
+        document.removeEventListener("mousedown", handleClickOutside);
+    }
+});
 
-    try {
-        saveButton.value = i18n.getMessage("buttonSaving");
+// Save
+function save() {
+    runSave(async () => {
+        const savedSnapshot = takeSnapshot();
+
         await saveConfig();
 
-        saveButton.value = i18n.getMessage("buttonSaved");
-        setTimeout(() => {
-            saveButton.value = oldText;
-        }, 1500);
-
-        gui_log(i18n.getMessage("eeprom_saved_ok"));
-    } catch (error) {
-        console.error("Save failed:", error);
-        saveButton.value = oldText;
-    }
+        // Post-save UI runs only after the persist resolves.
+        markClean(savedSnapshot);
+        flashSaveButtonText(i18n.getMessage("buttonSaved"), 1500);
+        // saveConfig() ends in saveToEeprom(), which already emits the shared "EEPROM saved"
+        // toast; eeprom_saved_ok resolves to the same string, so it's dropped here to avoid
+        // showing the identical toast twice.
+    });
 }
 
 // Helper functions
-function getColorStyle(colorIndex) {
+function getColorStyle(colorIndex: number) {
     return hsvToColor(ledColors.value[colorIndex]);
 }
 
-function getColorTitle(colorIndex) {
+function getColorTitle(colorIndex: number) {
     const colorNames = [
         "colorBlack",
         "colorWhite",
@@ -982,17 +1052,29 @@ function getColorTitle(colorIndex) {
     return colorNames[colorIndex] || "colorBlack";
 }
 
-function getModifierState(modifier) {
-    const map = { t: "throttleHue", o: "larsonScanner", b: "blink", y: "rainbow" };
-    return modifiers[map[modifier]] || false;
+function clearFlags(flags: Record<string, boolean>) {
+    Object.keys(flags).forEach((key) => {
+        flags[key] = false;
+    });
 }
 
-function getOverlayStateKey(overlay) {
-    const map = { w: "warnings", i: "indicator", v: "vtx" };
+function getModifierState(modifier: string) {
+    const map: Record<string, keyof typeof modifiers | undefined> = {
+        t: "throttleHue",
+        o: "larsonScanner",
+        b: "blink",
+        y: "rainbow",
+    };
+    const key = map[modifier];
+    return (key && modifiers[key]) || false;
+}
+
+function getOverlayStateKey(overlay: string) {
+    const map: Record<string, keyof typeof overlayStates | undefined> = { w: "warnings", i: "indicator", v: "vtx" };
     return map[overlay];
 }
 
-function removeOverlayFromSelected(overlay) {
+function removeOverlayFromSelected(overlay: string) {
     selectedIndices.value.forEach((index) => {
         const overlayIndex = gridLeds[index].functions.indexOf(overlay);
         if (overlayIndex !== -1) {
@@ -1007,517 +1089,534 @@ watch(auxChannelValue, (newVal) => {
 });
 </script>
 
-<style scoped>
-.content_wrapper {
-    position: relative;
-    padding: 1rem;
-}
+<style lang="less">
+.tab-led-strip {
+    .content_wrapper {
+        position: relative;
+        padding: 1rem;
+    }
 
-.cf_column {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-}
+    .cf_column {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+    }
 
-.note {
-    margin-bottom: 1.5rem;
-    padding: 0.75rem;
-    background: var(--surface-100);
-    border-left: 3px solid var(--primary-500);
-}
+    .note {
+        margin-bottom: 1.5rem;
+        padding: 0.75rem;
+        background: var(--surface-100);
+        border-inline-start: 3px solid var(--primary-500);
+    }
 
-.section {
-    color: var(--text);
-    font-size: 1.1em;
-    margin: 20px 0 5px 0;
-    border-bottom: 1px solid var(--primary-500);
-}
+    .section {
+        color: var(--text);
+        font-size: 1.1em;
+        margin: 20px 0 5px 0;
+        border-bottom: 1px solid var(--primary-500);
+    }
 
-/* Grid Container */
-.grid-container {
-    position: relative;
-    float: left;
-    margin-right: 30px;
-    width: calc(29px * 16 + 3px);
-    height: calc(29px * 16 + 3px);
-}
+    /* Grid Container */
 
-/* Grid Sections Overlay */
-.gridSections {
-    position: absolute;
-    top: 0;
-    left: 0;
-    z-index: 0;
-    width: calc(29px * 16 + 3px);
-    height: calc(29px * 16 + 3px);
-    border: 1px solid var(--surface-500);
-    border-radius: 3px;
-    pointer-events: none;
-    user-select: none;
-}
+    .grid-container {
+        position: relative;
+        float: inline-start;
+        margin-inline-end: 30px;
+        width: calc(29px * 16 + 3px);
+        height: calc(29px * 16 + 3px);
+    }
 
-.gridSections .block {
-    width: 25%;
-    height: 25%;
-    float: left;
-    border: 1px solid var(--surface-500);
-    box-sizing: border-box;
-}
+    /* Grid Sections Overlay */
 
-/* Controls Panel */
-.controls {
-    position: relative;
-    float: left;
-    width: 325px;
-}
+    .gridSections {
+        position: absolute;
+        top: 0;
+        inset-inline-start: 0;
+        z-index: 0;
+        width: calc(29px * 16 + 3px);
+        height: calc(29px * 16 + 3px);
+        border: 1px solid var(--surface-500);
+        border-radius: 3px;
+        pointer-events: none;
+        user-select: none;
+    }
 
-/* Top controls layout */
-.top-controls {
-    width: 100%;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 10px;
-}
+    .gridSections .block {
+        width: 25%;
+        height: 25%;
+        float: inline-start;
+        border: 1px solid var(--surface-500);
+        box-sizing: border-box;
+    }
 
-.clear-buttons-container {
-    display: flex;
-    gap: 4px;
-    flex: 1;
-}
+    /* Controls Panel */
 
-.clear-buttons-container button {
-    flex: 1;
-    margin: 0;
-}
+    .controls {
+        position: relative;
+        float: inline-start;
+        width: 325px;
+    }
 
-.wires-remaining {
-    text-align: center;
-    font-size: 14px;
-    flex-shrink: 0;
-}
+    /* Top controls layout */
 
-.wires-remaining div {
-    font-size: 40px;
-    color: var(--primary-500);
-    margin-bottom: -5px;
-    margin-top: -10px;
-}
+    .top-controls {
+        width: 100%;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+    }
 
-.wires-remaining.error div {
-    color: var(--error-500);
-}
+    .clear-buttons-container {
+        display: flex;
+        gap: 4px;
+        flex: 1;
+    }
 
-/* Buttons */
-button {
-    text-align: center;
-    font-weight: bold;
-    border: 1px solid var(--primary-600);
-    background-color: var(--primary-500);
-    border-radius: 3px;
-    padding: 7px 6px;
-    margin: 3px 0;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    color: black;
-}
+    .clear-buttons-container button {
+        flex: 1;
+        margin: 0;
+    }
 
-/* Buttons within controls - add left/right padding */
-.controls button {
-    padding: 7px 10px;
-    margin: 3px 4px;
-}
+    .wires-remaining {
+        text-align: center;
+        font-size: 14px;
+        flex-shrink: 0;
+    }
 
-button:hover:not(:disabled) {
-    background-color: var(--primary-600);
-    border-color: var(--primary-700);
-}
+    .wires-remaining div {
+        font-size: 40px;
+        color: var(--primary-500);
+        margin-bottom: -5px;
+        margin-top: -10px;
+    }
 
-button:active:not(:disabled) {
-    transform: scale(0.98);
-}
+    .wires-remaining.error div {
+        color: var(--error-500);
+    }
 
-/* Disabled button styles */
-button:disabled,
-button.disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    background-color: var(--surface-300);
-    border-color: var(--surface-500);
-    color: white;
-}
+    /* Swatch buttons (mode colors, special colors, colour palette).
+ * These stay plain <button> elements because their background is driven by the
+ * LED colour data, but they follow the same radius/typography as UButton so the
+ * tab matches the rest of the UI.  The selectors are deliberately scoped to the
+ * swatch containers — a bare `button` rule would also hit every UButton on the
+ * tab and undo its Nuxt UI styling. */
 
-button:disabled:hover,
-button.disabled:hover {
-    background-color: var(--surface-300);
-    border-color: var(--surface-500);
-}
+    .mode_colors > button,
+    .colors > button {
+        text-align: center;
+        font-weight: 500;
+        font-size: 12px;
+        line-height: 1;
+        border: 1px solid var(--primary-600);
+        background-color: var(--primary-500);
+        border-radius: var(--ui-radius);
+        padding: 7px 10px;
+        margin: 3px 4px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
 
-button:disabled:active,
-button.disabled:active {
-    transform: none;
-}
+    /* Label contrast is chosen against the swatch background, not the theme: these
+ * buttons carry an inline background-color taken from the LED colour data (and
+ * --primary-500 until it loads), which does not follow light/dark mode.  var(--text)
+ * would turn the label white over a yellow or cyan swatch.  The palette swatches
+ * below pick their own literal per colour for the same reason. */
 
-.save_btn {
-    min-width: 96px;
-}
+    .mode_colors > button {
+        color: black;
+    }
 
-.w50 {
-    width: 49%;
-}
+    .mode_colors > button:hover:not(:disabled),
+    .colors > button:hover:not(:disabled) {
+        background-color: var(--primary-600);
+        border-color: var(--primary-700);
+    }
 
-/* Wiring section layout */
-.wiring-container {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
-    margin-bottom: 10px;
-}
+    .mode_colors > button:active:not(:disabled),
+    .colors > button:active:not(:disabled) {
+        transform: scale(0.98);
+    }
 
-.wiringControls {
-    display: flex;
-    justify-content: space-between;
-    gap: 0.5rem;
-    width: 100%;
-}
+    /* Disabled swatch buttons */
 
-.wiringControls > button {
-    flex: 0 0 calc(50% - 0.25rem);
-}
+    .mode_colors > button:disabled,
+    .colors > button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        background-color: var(--surface-300);
+        border-color: var(--surface-500);
+        color: white;
+    }
 
-/* Select Dropdowns */
-.select span {
-    display: block;
-    margin-bottom: 5px;
-    margin-left: 3px;
-}
+    .w50 {
+        width: 49%;
+    }
 
-/* Function-specific select backgrounds — reach USelect's trigger button */
-.select .functionSelect.function-c :deep(button) {
-    background: linear-gradient(
-        to bottom right,
-        rgba(255, 0, 0, 0.5) 0%,
-        rgba(255, 255, 0, 0.5) 15%,
-        rgba(0, 255, 0, 0.5) 30%,
-        rgba(0, 255, 255, 0.5) 50%,
-        rgba(0, 0, 255, 0.5) 65%,
-        rgba(255, 0, 255, 0.5) 80%,
-        rgba(255, 0, 0, 0.5) 100%
-    );
-}
+    /* Wiring section layout */
 
-.select .functionSelect.function-f :deep(button) {
-    background: rgb(50, 205, 50);
-}
+    .wiring-container {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        margin-top: 0.5rem;
+        margin-bottom: 10px;
+    }
 
-.select .functionSelect.function-a :deep(button) {
-    background: rgb(52, 155, 255);
-}
+    .wiringControls {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.5rem;
+        width: 100%;
+    }
 
-.select .functionSelect.function-u :deep(button) {
-    background: linear-gradient(
-        to bottom right,
-        rgba(191, 0, 255, 0.5) 0%,
-        rgba(0, 179, 255, 0.5) 33%,
-        rgba(0, 4, 255, 0.5) 66%,
-        rgba(191, 0, 255, 0.5) 100%
-    );
-}
+    .wiringControls > button {
+        flex: 0 0 calc(50% - 0.25rem);
+    }
 
-.select .functionSelect.function-l :deep(button) {
-    background: magenta;
-}
+    /* Select Dropdowns */
 
-.select .functionSelect.function-s :deep(button) {
-    background: brown;
-}
+    .select > span {
+        display: block;
+        margin-bottom: 5px;
+        margin-inline-start: 3px;
+    }
 
-.select .functionSelect.function-g :deep(button) {
-    background: green;
-}
+    /* Function-specific select backgrounds — reach USelect's trigger button */
 
-.select .functionSelect.function-r :deep(button) {
-    background: var(--surface-500);
-}
+    .select .functionSelect.function-c button {
+        background: linear-gradient(
+            to bottom right,
+            rgba(255, 0, 0, 0.5) 0%,
+            rgba(255, 255, 0, 0.5) 15%,
+            rgba(0, 255, 0, 0.5) 30%,
+            rgba(0, 255, 255, 0.5) 50%,
+            rgba(0, 0, 255, 0.5) 65%,
+            rgba(255, 0, 255, 0.5) 80%,
+            rgba(255, 0, 0, 0.5) 100%
+        );
+    }
 
-/* Headers */
-.header {
-    color: var(--surface-600);
-    font-size: 13px;
-    font-weight: 600;
-    display: block;
-    margin-bottom: 5px;
-}
+    .select .functionSelect.function-f button {
+        background: rgb(50, 205, 50);
+    }
 
-/* Modifiers */
-.modifiers {
-    display: block;
-    margin-top: 5px;
-}
+    .select .functionSelect.function-a button {
+        background: rgb(52, 155, 255);
+    }
 
-.modifier-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin: 5px 0;
-}
+    .select .functionSelect.function-u button {
+        background: linear-gradient(
+            to bottom right,
+            rgba(191, 0, 255, 0.5) 0%,
+            rgba(0, 179, 255, 0.5) 33%,
+            rgba(0, 4, 255, 0.5) 66%,
+            rgba(191, 0, 255, 0.5) 100%
+        );
+    }
 
-.modifiers .auxSelect {
-    width: auto;
-    min-width: 10rem;
-}
+    .select .functionSelect.function-l button {
+        background: magenta;
+    }
 
-.modifiers .rainbowOverlay {
-    margin-top: 1px;
-    flex-wrap: wrap;
-}
+    .select .functionSelect.function-s button {
+        background: brown;
+    }
 
-.modifiers .sliders-group {
-    margin-top: 5px;
-    margin-left: 20px;
-    width: 100%;
-}
+    .select .functionSelect.function-g button {
+        background: green;
+    }
 
-/* Overlays */
-.overlays {
-    display: block;
-    margin-top: 5px;
-}
+    .select .functionSelect.function-r button {
+        background: var(--surface-500);
+    }
 
-/* Unified Slider Styles */
-.slider-container {
-    margin-top: 10px;
-}
+    /* Headers */
 
-.slider-control {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin: 5px 0;
-}
+    .header {
+        color: var(--surface-600);
+        font-size: 13px;
+        font-weight: 600;
+        display: block;
+        margin-bottom: 5px;
+    }
 
-.slider-value {
-    min-width: 2.5rem;
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-    font-size: 12px;
-    color: var(--text);
-}
+    /* Modifiers */
 
-/* Color Define Sliders */
-.colorDefineSliders {
-    display: none;
-    position: fixed;
-    z-index: 10000;
-    background: var(--surface-50);
-    padding: 5px;
-    border: 2px solid var(--surface-600);
-    border-radius: 6px;
-    width: 167px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-}
+    .modifiers {
+        display: block;
+        margin-top: 5px;
+    }
 
-.colorDefineSliderContainer {
-    display: flex;
-    align-items: center;
-    margin: 5px 0;
-}
+    .modifier-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin: 5px 0;
+    }
 
-.colorDefineSliderLabel {
-    width: 15px;
-    display: inline-block;
-    margin-right: 5px;
-}
+    .modifiers .auxSelect {
+        width: auto;
+        min-width: 10rem;
+    }
 
-.colorDefineSliderContainer input {
-    flex: 1;
-    margin: 0 5px;
-}
+    .modifiers .rainbowOverlay {
+        margin-top: 1px;
+        flex-wrap: wrap;
+    }
 
-.colorDefineSliderValue {
-    width: 30px;
-    display: inline-block;
-    text-align: right;
-}
+    .modifiers .sliders-group {
+        margin-top: 5px;
+        margin-inline-start: 20px;
+        width: 100%;
+    }
 
-/* Directions */
-/* Reproduce the compass-with-U/D layout from the pre-Nuxt-UI version:
+    /* Overlays */
+
+    .overlays {
+        display: block;
+        margin-top: 5px;
+    }
+
+    /* Unified Slider Styles */
+
+    .slider-container {
+        margin-top: 10px;
+    }
+
+    .slider-control {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 5px 0;
+    }
+
+    .slider-value {
+        min-width: 2.5rem;
+        text-align: end;
+        font-variant-numeric: tabular-nums;
+        font-size: 12px;
+        color: var(--text);
+    }
+
+    .colors {
+        height: 130px;
+        position: relative;
+        display: inline-grid;
+        grid-template-columns: repeat(4, 1fr);
+        grid-template-rows: repeat(4, 1fr);
+        gap: 4px;
+        width: 49%;
+        vertical-align: middle;
+    }
+
+    /* Colors button defaults */
+
+    .colors > button {
+        width: 100%;
+        height: 100%;
+        padding: 0;
+        margin: 0;
+        color: white;
+    }
+
+    .colors button:hover {
+        border-style: solid;
+    }
+
+    .colors button.btnOn {
+        border: 2px solid var(--text);
+    }
+
+    /* Default color backgrounds */
+
+    :where(.colors) .color-0 {
+        background: black;
+    }
+
+    :where(.colors) .color-1 {
+        background: white;
+        color: black !important;
+    }
+
+    :where(.colors) .color-2 {
+        background: red;
+    }
+
+    :where(.colors) .color-3 {
+        background: orange;
+    }
+
+    :where(.colors) .color-4 {
+        background: yellow;
+        color: black !important;
+    }
+
+    :where(.colors) .color-5 {
+        background: greenyellow;
+        color: black !important;
+    }
+
+    :where(.colors) .color-6 {
+        background: limegreen;
+    }
+
+    :where(.colors) .color-7 {
+        background: palegreen;
+        color: black !important;
+    }
+
+    :where(.colors) .color-8 {
+        background: cyan;
+        color: black !important;
+    }
+
+    :where(.colors) .color-9 {
+        background: lightcyan;
+        color: black !important;
+    }
+
+    :where(.colors) .color-10 {
+        background: dodgerblue;
+    }
+
+    :where(.colors) .color-11 {
+        background: darkviolet;
+    }
+
+    :where(.colors) .color-12 {
+        background: magenta;
+    }
+
+    :where(.colors) .color-13 {
+        background: deeppink;
+    }
+
+    :where(.colors) .color-14 {
+        background: black;
+    }
+
+    :where(.colors) .color-15 {
+        background: black;
+    }
+
+    /* Color Define Sliders */
+
+    .colorDefineSliders {
+        display: none;
+        position: fixed;
+        z-index: 10000;
+        background: var(--surface-50);
+        padding: 5px;
+        border: 2px solid var(--surface-600);
+        border-radius: 6px;
+        width: 167px;
+        box-shadow: var(--shadow-popup);
+    }
+
+    .colorDefineSliderContainer {
+        display: flex;
+        align-items: center;
+        margin: 5px 0;
+    }
+
+    .colorDefineSliderLabel {
+        width: 15px;
+        display: inline-block;
+        margin-inline-end: 5px;
+    }
+
+    .colorDefineSliderContainer > input {
+        flex: 1;
+        margin: 0 5px;
+    }
+
+    .colorDefineSliderValue {
+        width: 30px;
+        display: inline-block;
+        text-align: end;
+    }
+
+    /* Directions */
+
+    /* Reproduce the compass-with-U/D layout from the pre-Nuxt-UI version:
  *   Row 1:  .   N   .   U
  *   Row 2:  W   .   E   D
  *   Row 3:  .   S   .   .
- * :deep() is needed because UButton renders through ULink/ULinkBase, so
- * the rendered <button> sits outside this component's scoped selector. */
-.directions {
-    display: inline-grid;
-    grid-template-columns: 30px 30px 30px 30px;
-    grid-template-rows: 30px 30px 30px;
-    gap: 4px;
-    vertical-align: middle;
-    margin-right: 12px;
-}
+ * The rules target the <button> that UButton renders through ULink/ULinkBase. */
 
-.directions :deep(button) {
-    width: 30px;
-    height: 30px;
-    min-width: 30px;
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 12px;
-    line-height: 1;
-}
+    .directions {
+        display: inline-grid;
+        grid-template-columns: 30px 30px 30px 30px;
+        grid-template-rows: 30px 30px 30px;
+        gap: 4px;
+        direction: ltr;
+        vertical-align: middle;
+        margin-inline-end: 12px;
+    }
 
-.directions :deep(.dir-n) {
-    grid-column: 2;
-    grid-row: 1;
-}
+    .directions button {
+        width: 30px;
+        height: 30px;
+        min-width: 30px;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        line-height: 1;
+    }
 
-.directions :deep(.dir-u) {
-    grid-column: 4;
-    grid-row: 1;
-}
+    .directions .dir-n {
+        grid-column: 2;
+        grid-row: 1;
+    }
 
-.directions :deep(.dir-w) {
-    grid-column: 1;
-    grid-row: 2;
-}
+    .directions .dir-u {
+        grid-column: 4;
+        grid-row: 1;
+    }
 
-.directions :deep(.dir-e) {
-    grid-column: 3;
-    grid-row: 2;
-}
+    .directions .dir-w {
+        grid-column: 1;
+        grid-row: 2;
+    }
 
-.directions :deep(.dir-d) {
-    grid-column: 4;
-    grid-row: 2;
-}
+    .directions .dir-e {
+        grid-column: 3;
+        grid-row: 2;
+    }
 
-.directions :deep(.dir-s) {
-    grid-column: 2;
-    grid-row: 3;
-}
+    .directions .dir-d {
+        grid-column: 4;
+        grid-row: 2;
+    }
 
-/* Colors */
-.colors {
-    height: 130px;
-    position: relative;
-    display: inline-grid;
-    grid-template-columns: repeat(4, 1fr);
-    grid-template-rows: repeat(4, 1fr);
-    gap: 4px;
-    width: 49%;
-    vertical-align: middle;
-}
+    .directions .dir-s {
+        grid-column: 2;
+        grid-row: 3;
+    }
 
-.colors > button {
-    width: 100%;
-    height: 100%;
-    padding: 0;
-    color: white;
-}
+    /* Mode / Special Color Buttons */
 
-.colors button:hover {
-    border-style: solid;
-}
+    .mode_colors button.btnOn {
+        border: 2px solid var(--text);
+    }
 
-.colors button.btnOn {
-    border: 2px solid var(--text);
-}
+    /* Utility */
 
-/* Default color backgrounds */
-.color-0 {
-    background: black;
-}
+    .clear-both {
+        clear: both;
+    }
 
-.color-1 {
-    background: white;
-    color: black !important;
-}
+    /* Responsive */
 
-.color-2 {
-    background: red;
-}
-
-.color-3 {
-    background: orange;
-}
-
-.color-4 {
-    background: yellow;
-    color: black !important;
-}
-
-.color-5 {
-    background: greenyellow;
-    color: black !important;
-}
-
-.color-6 {
-    background: limegreen;
-}
-
-.color-7 {
-    background: palegreen;
-    color: black !important;
-}
-
-.color-8 {
-    background: cyan;
-    color: black !important;
-}
-
-.color-9 {
-    background: lightcyan;
-    color: black !important;
-}
-
-.color-10 {
-    background: dodgerblue;
-}
-
-.color-11 {
-    background: darkviolet;
-}
-
-.color-12 {
-    background: magenta;
-}
-
-.color-13 {
-    background: deeppink;
-}
-
-.color-14 {
-    background: black;
-}
-
-.color-15 {
-    background: black;
-}
-
-/* Mode Colors */
-.mode_colors button.btnOn {
-    border: 2px solid var(--text);
-}
-
-/* Special Colors */
-.special_colors button.btnOn {
-    border: 2px solid var(--text);
-}
-
-/* Utility */
-.clear-both {
-    clear: both;
-}
-
-/* Responsive */
-@media all and (max-width: 575px) {
-    .controls {
-        width: 100%;
+    @media all and (max-width: 575px) {
+        .controls {
+            width: 100%;
+        }
     }
 }
 </style>

@@ -36,15 +36,33 @@
                 :label="$t('sensorsSonarSelect')"
                 @update:model-value="onCheckboxChange"
             />
+            <USwitch
+                v-model="checkboxes[5]"
+                :disabled="!hasPitot"
+                size="sm"
+                :label="$t('sensorsPitotSelect')"
+                @update:model-value="onCheckboxChange"
+            />
             <div class="flex items-center gap-2">
                 <USwitch
-                    v-model="checkboxes[5]"
+                    v-model="checkboxes[6]"
                     :disabled="!hasDebug"
                     size="sm"
                     :label="$t('sensorsDebugSelect')"
                     @update:model-value="onCheckboxChange"
                 />
-                <UInput v-show="checkboxes[5]" :model-value="debugModeName" size="xs" disabled class="w-40 font-mono" />
+                <UInput v-show="checkboxes[6]" :model-value="debugModeName" size="xs" disabled class="w-40 font-mono" />
+            </div>
+
+            <div class="flex items-center gap-2 ml-auto text-[10px] [&_[data-slot=base]]:text-[10px]!">
+                <span v-html="$t('sensorsGlobalRefresh')"></span>
+                <USelect
+                    :model-value="globalRate"
+                    :items="refreshRateItems"
+                    @update:model-value="updateGlobalRate(Number($event))"
+                    class="min-w-24"
+                    size="xs"
+                />
             </div>
         </div>
 
@@ -64,7 +82,7 @@
             @update:scale="sensor.hasScale ? updateScale(sensor.type, $event) : null"
         />
 
-        <div v-show="checkboxes[5]" class="flex flex-col gap-2.5">
+        <div v-show="checkboxes[6]" class="flex flex-col gap-2.5">
             <SensorGraph
                 v-for="i in debugColumns"
                 :key="i"
@@ -74,36 +92,48 @@
                 :title="debugTitles[i - 1]"
                 :show-refresh-rate="i === 1"
                 :rate="rates.debug"
+                :scale="debugScales[i - 1]"
+                :scale-options="DEBUG_SCALE_OPTIONS"
                 :display-values="[debugDisplay[i - 1]]"
                 :is-debug="true"
                 @update:rate="updateRate('debug', $event)"
+                @update:scale="updateDebugScale(i - 1, $event)"
             />
         </div>
     </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, computed, onMounted, nextTick } from "vue";
 import { storeToRefs } from "pinia";
 import { useFlightControllerStore } from "@/stores/fc";
 import { useDebugStore } from "@/stores/debug";
-import { useSensorsStore } from "@/stores/sensors";
+import { decodeDebugFieldToFriendly } from "@/js/utils/debugModes";
+import { useSensorsStore, type RatedSensor, type ScaledSensor } from "@/stores/sensors";
 import { useSensorGraph } from "@/composables/useSensorGraph";
-import { useInterval } from "../../../composables/useInterval";
+import { useLiveSensorData } from "@/composables/sensors/useLiveSensorData";
 import { have_sensor } from "../../../js/sensor_helpers";
-import { GYRO_SCALE_OPTIONS, ACCEL_SCALE_OPTIONS, MAG_SCALE_OPTIONS } from "./constants";
+import { radToDeg, clamp } from "../../../js/utils/common";
+import {
+    GYRO_SCALE_OPTIONS,
+    ACCEL_SCALE_OPTIONS,
+    MAG_SCALE_OPTIONS,
+    PITOT_SCALE_OPTIONS,
+    DEBUG_SCALE_OPTIONS,
+    REFRESH_RATE_OPTIONS,
+} from "./constants";
 import SensorGraph from "./SensorGraph.vue";
-import MSP from "../../../js/msp";
-import MSPCodes from "../../../js/msp/MSPCodes";
 import semver from "semver";
 import { API_VERSION_1_46 } from "../../../js/data_storage";
 
 const fcStore = useFlightControllerStore();
 const debugStore = useDebugStore();
 const sensorsStore = useSensorsStore();
-const { addInterval, removeInterval } = useInterval();
+const { loadMotorConfig, loadAdvancedConfig, startPolling, stopPolling } = useLiveSensorData();
 
-const { checkboxes, rates, scales, debugColumns } = storeToRefs(sensorsStore);
+const { checkboxes, globalRate, rates, scales, debugScales, debugColumns } = storeToRefs(sensorsStore);
+
+const refreshRateItems = REFRESH_RATE_OPTIONS.map((o) => ({ value: o.value, label: o.label }));
 
 const {
     addGyroSample,
@@ -111,9 +141,11 @@ const {
     addMagSample,
     addAltitudeSample,
     addSonarSample,
+    addPitotSample,
     addDebugSample,
     incrementDebugCounter,
     updateScales: updateGraphScales,
+    setDebugScales: updateGraphDebugScales,
     updateGraphs,
     initializeGraphs,
 } = useSensorGraph();
@@ -124,9 +156,27 @@ const accelDisplay = reactive({ x: "0", y: "0", z: "0" });
 const magDisplay = reactive({ x: "0", y: "0", z: "0" });
 const altitudeDisplay = ref("0");
 const sonarDisplay = ref("0");
+const pitotDisplay = ref("0");
 const debugDisplay = ref(new Array(8).fill("0"));
 
-const sensorConfigs = [
+interface SensorConfigBase {
+    checkboxIndex: number;
+    titleKey: string;
+    hintKey?: string;
+    getDisplayValues: () => string[];
+}
+
+// Discriminated on hasScale, so the template's `sensor.hasScale ? scales[sensor.type] : null`
+// only indexes the scales with a sensor that has one.
+type SensorConfig =
+    | (SensorConfigBase & { type: ScaledSensor; hasScale: true; scaleOptions: number[] })
+    | (SensorConfigBase & {
+          type: Exclude<RatedSensor, ScaledSensor | "debug">;
+          hasScale: false;
+          scaleOptions?: undefined;
+      });
+
+const sensorConfigs: SensorConfig[] = [
     {
         type: "gyro",
         checkboxIndex: 0,
@@ -166,6 +216,14 @@ const sensorConfigs = [
         hasScale: false,
         getDisplayValues: () => [sonarDisplay.value],
     },
+    {
+        type: "pitot",
+        checkboxIndex: 5,
+        titleKey: "sensorsPitotTitle",
+        hasScale: true,
+        scaleOptions: PITOT_SCALE_OPTIONS,
+        getDisplayValues: () => [pitotDisplay.value],
+    },
 ];
 
 // Sensor availability
@@ -179,6 +237,7 @@ const hasAltitude = computed(
         (have_sensor(fcStore.config.activeSensors, "baro") || have_sensor(fcStore.config.activeSensors, "gps")),
 );
 const hasSonar = computed(() => isFcBoard.value && have_sensor(fcStore.config.activeSensors, "sonar"));
+const hasPitot = computed(() => isFcBoard.value && have_sensor(fcStore.config.activeSensors, "pitot"));
 
 const hasDebug = computed(() => fcStore.pidAdvancedConfig.debugMode !== 0);
 const debugModeName = computed(() => debugStore.modes[fcStore.pidAdvancedConfig.debugMode] ?? "DISABLED");
@@ -200,55 +259,29 @@ function initSensorData() {
 }
 
 function initializeTimers() {
-    removeInterval("IMU_pull");
-    removeInterval("altitude_pull");
-    removeInterval("sonar_pull");
-    removeInterval("debug_pull");
+    stopPolling();
 
+    // Gyro/accel/mag share one MSP_RAW_IMU pull, so use the fastest of the three.
     const fastest = Math.min(rates.value.gyro, rates.value.accel, rates.value.mag);
 
     if (checkboxes.value[0] || checkboxes.value[1] || checkboxes.value[2]) {
-        addInterval(
-            "IMU_pull",
-            () => {
-                MSP.send_message(MSPCodes.MSP_RAW_IMU, false, false, update_imu_graphs);
-            },
-            fastest,
-            true,
-        );
+        startPolling("imu", fastest, update_imu_graphs);
     }
 
     if (checkboxes.value[3]) {
-        addInterval(
-            "altitude_pull",
-            () => {
-                MSP.send_message(MSPCodes.MSP_ALTITUDE, false, false, update_altitude_graph);
-            },
-            rates.value.altitude,
-            true,
-        );
+        startPolling("altitude", rates.value.altitude, update_altitude_graph);
     }
 
     if (checkboxes.value[4]) {
-        addInterval(
-            "sonar_pull",
-            () => {
-                MSP.send_message(MSPCodes.MSP_SONAR, false, false, update_sonar_graphs);
-            },
-            rates.value.sonar,
-            true,
-        );
+        startPolling("sonar", rates.value.sonar, update_sonar_graphs);
     }
 
     if (checkboxes.value[5]) {
-        addInterval(
-            "debug_pull",
-            () => {
-                MSP.send_message(MSPCodes.MSP_DEBUG, false, false, update_debug_graphs);
-            },
-            rates.value.debug,
-            true,
-        );
+        startPolling("pitot", rates.value.pitot, update_pitot_graphs);
+    }
+
+    if (checkboxes.value[6]) {
+        startPolling("debug", rates.value.debug, update_debug_graphs);
     }
 }
 
@@ -265,8 +298,8 @@ function update_imu_graphs() {
         const ax = fcStore.sensorData.accelerometer[0];
         const ay = fcStore.sensorData.accelerometer[1];
         const az = fcStore.sensorData.accelerometer[2];
-        const rollACC = Math.round(Math.atan2(ay, Math.hypot(ax, az)) * (180 / Math.PI));
-        const pitchACC = Math.round(Math.atan2(ax, Math.hypot(ay, az)) * (180 / Math.PI));
+        const rollACC = Math.round(radToDeg(Math.atan2(ay, Math.hypot(ax, az))));
+        const pitchACC = Math.round(radToDeg(Math.atan2(ax, Math.hypot(ay, az))));
         accelDisplay.x = `${ax.toFixed(2)} (${rollACC})`;
         accelDisplay.y = `${ay.toFixed(2)} (${pitchACC})`;
         accelDisplay.z = az.toFixed(2);
@@ -294,10 +327,44 @@ function update_sonar_graphs() {
     updateGraphs();
 }
 
+function update_pitot_graphs() {
+    // MSP_PITOT's decoder sets this before the callback runs; null only before the first reply.
+    const pitot = fcStore.sensorData.pitot;
+    if (!pitot) {
+        return;
+    }
+    addPitotSample([pitot.airspeed]);
+    pitotDisplay.value = String(pitot.airspeed);
+    updateGraphs();
+}
+
+/**
+ * Hardware-scaling context for the shared debug decode helper, built from the
+ * connected FC. Mirrors the fixed scaling MSPHelper applies to the live main
+ * gyro/acc display (no per-FC gyroScale/acc_1G exists), plus motor config for
+ * throttle/RPM modes.
+ */
+function liveDebugContext() {
+    const minThrottle = fcStore.motorConfig?.minthrottle ?? 1000;
+    const maxThrottle = fcStore.motorConfig?.maxthrottle ?? 2000;
+    return {
+        apiVersion: fcStore.config?.apiVersion,
+        // `|| 1` (not `??`) so an unloaded 0 can't divide-by-zero in RPM modes.
+        motorPoles: fcStore.motorConfig?.motor_poles || 1,
+        gyroRawToDegreesPerSecond: (v: number) => v * (4 / 16.4),
+        accRawToGs: (v: number) => v / 2048,
+        rcCommandRawToThrottle: (v: number) => clamp(((v - minThrottle) / (maxThrottle - minThrottle)) * 100, 0, 100),
+        throttleToRcCommandRaw: (v: number) => (v / 100) * (maxThrottle - minThrottle) + minThrottle,
+    };
+}
+
 function update_debug_graphs() {
+    const modeName = debugStore.modes[fcStore.pidAdvancedConfig.debugMode];
+    const ctx = liveDebugContext();
     for (let i = 0; i < debugColumns.value; i++) {
-        addDebugSample(i, [fcStore.sensorData.debug[i]]);
-        debugDisplay.value[i] = fcStore.sensorData.debug[i].toString();
+        const raw = fcStore.sensorData.debug[i];
+        addDebugSample(i, [raw]);
+        debugDisplay.value[i] = decodeDebugFieldToFriendly(modeName, `debug[${i}]`, raw, ctx);
     }
     incrementDebugCounter();
     updateGraphs();
@@ -323,23 +390,36 @@ function onCheckboxChange() {
     initializeTimers();
 }
 
-function updateRate(sensor, value) {
+function updateRate(sensor: RatedSensor, value: number) {
     sensorsStore.updateRate(sensor, value);
     initializeTimers();
 }
 
-function updateScale(sensor, value) {
+function updateGlobalRate(value: number) {
+    sensorsStore.updateGlobalRate(value);
+    initializeTimers();
+}
+
+function updateScale(sensor: ScaledSensor, value: number) {
     sensorsStore.updateScale(sensor, value);
     updateGraphScales(scales.value);
-    initializeTimers();
+}
+
+function updateDebugScale(index: number, value: number) {
+    sensorsStore.updateDebugScale(index, value);
+    updateGraphDebugScales(debugScales.value);
 }
 
 onMounted(async () => {
     sensorsStore.loadFromConfig();
 
+    // Needed for DSHOT_RPM_TELEMETRY debug decoding (motor_poles); other tabs
+    // load it on mount too, and it isn't fetched at connection time.
+    await loadMotorConfig();
+
     if (semver.gte(fcStore.config.apiVersion, API_VERSION_1_46)) {
         sensorsStore.debugColumns = 8;
-        await MSP.promise(MSPCodes.MSP_ADVANCED_CONFIG);
+        await loadAdvancedConfig();
         displayDebugColumnNames();
     } else {
         sensorsStore.debugColumns = 4;
@@ -353,6 +433,7 @@ onMounted(async () => {
         hasMag.value,
         hasAltitude.value,
         hasSonar.value,
+        hasPitot.value,
         hasDebug.value,
     ];
     for (let i = 0; i < sensorAvailability.length; i++) {
@@ -367,6 +448,7 @@ onMounted(async () => {
     await nextTick();
     initializeGraphs(null, debugColumns.value);
     updateGraphScales(scales.value);
+    updateGraphDebugScales(debugScales.value);
     initializeTimers();
 });
 </script>

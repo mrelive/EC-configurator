@@ -1,9 +1,24 @@
 <template>
     <BaseTab tab-name="cli" @mounted="onTabMounted" @cleanup="onTabCleanup">
         <div class="content_wrapper flex flex-col overflow-hidden pb-0 max-[1055px]:h-[calc(100%-87px)]">
-            <UiBox highlight class="mb-3">
+            <UiBox highlight class="cli-info-tile mb-3">
                 <p v-html="$t('cliInfo')"></p>
             </UiBox>
+            <UButton
+                class="cli-info-button"
+                icon="i-lucide-info"
+                color="neutral"
+                variant="ghost"
+                size="sm"
+                square
+                :aria-label="$t('cliInfo')"
+                @click="infoOpen = true"
+            />
+            <UModal v-model:open="infoOpen" :title="$t('tabCLI')" :ui="{ content: 'w-[92vw] max-w-[600px]' }">
+                <template #body>
+                    <p v-html="$t('cliInfo')"></p>
+                </template>
+            </UModal>
 
             <div
                 class="cli-backdrop grow w-full border border-(--surface-500) bg-black/75 bg-no-repeat bg-[position:50%_80%] bg-[size:600px] rounded-[5px] shadow-[inset_0_0_20px_rgba(0,0,0,0.8)] max-[575px]:bg-[size:100%]"
@@ -29,6 +44,7 @@
                     v-model="cli.state.commandInput"
                     name="commands"
                     :placeholder="$t('cliInputPlaceholder')"
+                    :aria-label="$t('cliInputPlaceholder')"
                     rows="1"
                     cols="0"
                     class="w-full h-[22px] leading-5 pl-[5px] border border-(--surface-500) resize-none bg-(--surface-200) text-(--surface-900)"
@@ -41,41 +57,52 @@
         </div>
 
         <!-- Snippet preview dialog -->
-        <dialog ref="snippetPreviewDialogRef" closedby="any" class="w-[600px] h-fit">
-            <div class="p-4">
+        <UModal v-model:open="snippetPreviewOpen" :ui="{ content: 'w-[600px]' }">
+            <template #body>
                 <div class="note mb-3">
                     <p v-html="$t('cliConfirmSnippetNote')"></p>
                 </div>
                 <textarea
                     v-model="cli.state.snippetPreview"
                     rows="20"
-                    class="bg-black/75 w-full resize-none overflow-y-scroll overflow-x-hidden font-mono text-white p-[5px] mb-[5px]"
+                    :aria-label="$t('cliSnippetPreviewLabel')"
+                    class="bg-black/75 w-full resize-none overflow-y-scroll overflow-x-hidden font-mono text-white p-[5px]"
                 ></textarea>
-                <div class="mt-3">
+            </template>
+            <template #footer>
+                <div class="flex justify-end gap-2 w-full">
                     <UButton :label="$t('cliConfirmSnippetBtn')" @click="handleSnippetConfirm" />
                 </div>
-            </div>
-        </dialog>
+            </template>
+        </UModal>
 
         <!-- Support warning dialog -->
-        <dialog ref="supportWarningDialogRef" class="w-[400px] h-fit">
-            <div class="p-4">
-                <h3 class="font-semibold mb-2">{{ $t("supportWarningDialogTitle") }}</h3>
+        <UModal
+            v-model:open="supportWarningOpen"
+            :title="$t('supportWarningDialogTitle')"
+            :close="false"
+            :dismissible="false"
+            :ui="{ content: 'w-[400px]' }"
+        >
+            <template #body>
                 <div class="mb-3" v-html="$t('supportWarningDialogText')"></div>
                 <textarea
                     v-model="cli.state.supportDialogInput"
                     name="supportWarningDialogInput"
                     :placeholder="$t('supportWarningDialogInputPlaceHolder')"
+                    :aria-label="$t('supportWarningDialogInputPlaceHolder')"
                     rows="3"
                     cols="0"
                     class="w-full mt-2 leading-5 p-1 border border-(--ui-border) resize-none bg-(--ui-bg-muted) text-(--ui-text)"
                 ></textarea>
-                <div class="flex gap-2 mt-3">
-                    <UButton :label="$t('submit')" @click="handleSupportSubmit" />
+            </template>
+            <template #footer>
+                <div class="flex justify-end gap-2 w-full">
                     <UButton :label="$t('cancel')" variant="outline" @click="handleSupportCancel" />
+                    <UButton :label="$t('submit')" @click="handleSupportSubmit" />
                 </div>
-            </div>
-        </dialog>
+            </template>
+        </UModal>
 
         <!-- Bottom toolbar -->
         <div class="content_toolbar xs-compressed toolbar_fixed_bottom flex items-center gap-2">
@@ -97,12 +124,12 @@
     </BaseTab>
 </template>
 
-<script>
-import { defineComponent, nextTick } from "vue";
+<script lang="ts">
+import { defineComponent, nextTick, ref } from "vue";
 import BaseTab from "./BaseTab.vue";
 import CliAutocompleteDropdown from "../cli/CliAutocompleteDropdown.vue";
 import { useCli } from "../../composables/useCli";
-import { TABS } from "../../js/gui";
+import { TABS } from "../../js/tab_adapters";
 import CliAutoComplete from "../../js/CliAutoComplete";
 import { EventBus } from "../eventBus";
 import { i18n } from "../../js/localization";
@@ -118,7 +145,7 @@ export default defineComponent({
     setup() {
         const cli = useCli();
 
-        let snippetExecuteCallback = null;
+        let snippetExecuteCallback: (() => void) | null = null;
 
         const onBuildStart = () => {
             if (cli.commandInputRef.value) {
@@ -151,9 +178,10 @@ export default defineComponent({
                 TABS.cli = {};
             }
             TABS.cli.read = cli.read;
-            TABS.cli.cleanup = (callback) => {
-                cli.cleanup();
-                if (callback) {
+            TABS.cli.cleanup = (callback?: () => void) => {
+                // cli.cleanup() true => CLI exit rebooted the FC; skip the destination mount
+                // (reconnect lands on lastTab). Only mount when not rebooting.
+                if (!cli.cleanup() && callback) {
                     callback();
                 }
             };
@@ -172,7 +200,7 @@ export default defineComponent({
         };
 
         const onTabCleanup = () => {
-            // First, clean up the CLI to set CONFIGURATOR.cliActive = false
+            // First, clean up the CLI to set the connection store's cliActive = false
             // This prevents serial_backend from trying to call TABS.cli.read()
             cli.cleanup();
 
@@ -220,7 +248,7 @@ export default defineComponent({
             }
         };
 
-        const onAutocompleteSelect = (index) => {
+        const onAutocompleteSelect = (index: number) => {
             cli.autocomplete.selectItem(index);
             // Mouse click only applies the replacement, does not send the command.
             // Refocus the textarea so the user can continue typing.
@@ -229,8 +257,11 @@ export default defineComponent({
             }
         };
 
+        const infoOpen = ref(false);
+
         return {
             cli,
+            infoOpen,
             onTabMounted,
             onTabCleanup,
             handleLoadFile,
@@ -243,8 +274,8 @@ export default defineComponent({
             windowWrapperRef: cli.windowWrapperRef,
             cliWindowRef: cli.cliWindowRef,
             commandInputRef: cli.commandInputRef,
-            snippetPreviewDialogRef: cli.snippetPreviewDialogRef,
-            supportWarningDialogRef: cli.supportWarningDialogRef,
+            snippetPreviewOpen: cli.snippetPreviewOpen,
+            supportWarningOpen: cli.supportWarningOpen,
         };
     },
 });
@@ -254,6 +285,63 @@ export default defineComponent({
 /* BaseTab wrapper — no template access to add Tailwind classes */
 .tab-cli {
     height: calc(100% - 3rem);
+}
+
+.cli-info-button {
+    display: none;
+}
+
+/* Phone/tablet shell only: the terminal is pinned to the viewport between the account button
+   and the floating status bar, so it never scrolls with the page and keeps a stable height
+   while the on-screen keyboard is up. Desktop and the browser keep the flow layout. */
+body.mobile-app-shell {
+    @media all and (max-width: 575px), all and (max-width: 950px) and (max-height: 500px) and (orientation: landscape) {
+        .cli-info-tile {
+            display: none;
+        }
+
+        /* iOS zooms the page whenever a focused field is under 16px, which leaves the terminal
+           scaled and off-centre after the first keystroke. 16px is the threshold, not a design
+           choice; the box grows to match so the text still fits. */
+        textarea[name="commands"] {
+            font-size: 16px;
+            height: auto;
+            min-height: 1.75rem;
+        }
+
+        .cli-info-button {
+            display: inline-flex;
+            position: fixed;
+            top: calc(0.5rem + var(--bf-inset-top));
+            /* Clear of the floating connect control, which owns the far corner. */
+            right: 4rem;
+            z-index: 2002;
+            border-radius: 9999px;
+            border: 1px solid var(--surface-200);
+            background-color: color-mix(in srgb, var(--surface-100) 82%, transparent);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            box-shadow: var(--shadow-chrome-floating);
+        }
+
+        /* Pin the whole tab, not just the terminal: the narrow-layout rule below puts the
+           toolbar in normal flex flow, and pinning only the wrapper would leave the toolbar
+           as the sole in-flow child, parked at the top behind the terminal. */
+        .tab-cli {
+            position: fixed;
+            top: calc(3rem + var(--bf-inset-top));
+            left: 0.5rem;
+            right: 0.5rem;
+            /* Sit directly on top of the floating status bar. */
+            bottom: calc(2.5rem + var(--bf-inset-bottom));
+            height: auto;
+        }
+
+        .tab-cli .content_wrapper {
+            margin: 0;
+            padding: 0 0 0.3rem;
+        }
+    }
 }
 
 /* background-image needs CSS for Vite asset resolution */
@@ -277,15 +365,49 @@ export default defineComponent({
 }
 
 .tab-cli .cli-window .cli-comment {
-    color: #7f848e;
+    color: var(--code-comment);
 }
 
 .tab-cli .cli-window .cli-cmd,
 .tab-cli .cli-window .cli-label {
-    color: #61afef;
+    color: var(--code-label);
 }
 
 .tab-cli .cli-window .cli-num {
-    color: #e5c07b;
+    color: var(--code-number);
+}
+
+/* On narrow screens the fixed bottom toolbar would wrap its 5 buttons onto
+   several rows, growing past the space the CLI content reserves (calc(100% - 87px))
+   and overlapping the command textarea. Instead, pin the toolbar to the bottom via
+   normal flex flow (not `position: fixed`): the content fills the space above it and
+   the toolbar wraps to as many rows as it needs without ever overlapping. */
+@media all and (max-width: 1055px) {
+    .tab-cli {
+        display: flex;
+        flex-direction: column;
+        /* Fill the full content height (the base rule reserves 3rem for the
+           previously-fixed toolbar) so the in-flow toolbar pins flush to the bottom. */
+        height: 100%;
+    }
+    .tab-cli .content_wrapper {
+        flex: 1 1 auto;
+        height: auto;
+        min-height: 0;
+        /* The global .content_wrapper reserves 3rem at the bottom to clear the
+           fixed toolbar; the CLI toolbar is now in normal flow. */
+        padding-bottom: 0.3rem;
+    }
+    .tab-cli .content_toolbar.toolbar_fixed_bottom {
+        position: static;
+        width: 100%;
+        max-width: 100%;
+        flex-wrap: wrap;
+        justify-content: center;
+        border-start-start-radius: 0;
+    }
+    .tab-cli .content_toolbar.toolbar_fixed_bottom::before {
+        display: none;
+    }
 }
 </style>

@@ -1,9 +1,5 @@
 <template>
-    <UModal
-        v-model:open="open"
-        :title="$t('tabOptions')"
-        :ui="{ overlay: 'z-3000', content: 'max-w-4xl h-full z-3001' }"
-    >
+    <UModal v-model:open="open" :title="$t('tabOptions')" :ui="{ content: 'max-w-4xl h-full' }">
         <template #body>
             <div class="flex flex-col gap-4">
                 <UiBox>
@@ -22,7 +18,7 @@
                     <SettingRow :label="$t('cliAutoComplete')">
                         <USwitch v-model="settings.cliAutoComplete" size="sm" />
                     </SettingRow>
-                    <SettingRow :label="$t('showManualMode')">
+                    <SettingRow v-if="settings.expertMode" :label="$t('showManualMode')">
                         <USwitch v-model="settings.showManualMode" size="sm" />
                     </SettingRow>
                     <SettingRow v-if="settings.expertMode" :label="$t('showVirtualMode')">
@@ -33,19 +29,6 @@
                     </SettingRow>
                     <SettingRow :label="$t('showNotifications')">
                         <USwitch v-model="settings.showNotifications" size="sm" />
-                    </SettingRow>
-                    <SettingRow :label="$t('firmwareBackupOnFlash')">
-                        <USelect
-                            :items="[
-                                { label: $t('firmwareBackupDisabled'), value: 0 },
-                                { label: $t('firmwareBackupEnabled'), value: 1 },
-                                { label: $t('firmwareBackupAsk'), value: 2 },
-                            ]"
-                            size="sm"
-                            v-model="settings.backupOnFlash"
-                            class="min-w-40"
-                            :ui="{ content: 'z-3002' }"
-                        />
                     </SettingRow>
                 </UiBox>
 
@@ -121,7 +104,12 @@
                             v-model="settings.userLanguage"
                             value-key="value"
                             :items="[
-                                { label: $t('language_default'), value: 'DEFAULT' },
+                                {
+                                    label: i18n.getMessage('language_DEFAULT', {
+                                        systemLanguage: i18n.getMessage(`language_${i18n.getSystemLocale()}`),
+                                    }),
+                                    value: 'DEFAULT',
+                                },
                                 { type: 'separator' },
                                 ...availableLanguages.map((lang) => ({
                                     label: $t(`language_${lang}`),
@@ -162,13 +150,13 @@
     </UModal>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, onUnmounted, reactive, watch } from "vue";
 import { useDialog } from "@/composables/useDialog";
 import { get as getConfig, set as setConfig } from "../../js/ConfigStorage";
 import { applyUiScale, sanitizeUiScale, DEFAULT_UI_SCALE, MIN_UI_SCALE, MAX_UI_SCALE } from "../../js/UiScale";
 import { i18n } from "../../js/localization";
-import PortHandler from "../../js/port_handler";
+import DeviceHandler from "../../js/device_handler";
 import CliAutoComplete from "../../js/CliAutoComplete";
 import DarkTheme, { setDarkTheme } from "../../js/DarkTheme";
 import { checkSetupAnalytics } from "../../js/Analytics";
@@ -261,7 +249,7 @@ watch(
     (value) => {
         setConfig({ analyticsOptOut: value });
         checkSetupAnalytics((analyticsService) => {
-            analyticsService.setOptOut(value);
+            analyticsService?.setOptOut(value);
         });
     },
 );
@@ -278,7 +266,7 @@ watch(
     () => settings.showManualMode,
     (value) => {
         setConfig({ showManualMode: value });
-        PortHandler.setShowManualMode(value);
+        DeviceHandler.setShowManualMode(value);
     },
 );
 
@@ -286,7 +274,7 @@ watch(
     () => settings.showVirtualMode,
     (value) => {
         setConfig({ showVirtualMode: value });
-        PortHandler.setShowVirtualMode(value);
+        DeviceHandler.setShowVirtualMode(value);
     },
 );
 
@@ -342,7 +330,9 @@ watch(
 watch(
     () => settings.userLanguage,
     (value) => {
-        i18n.changeLanguage(value);
+        // The seed can be undefined (before i18n.init()), but the watcher only fires on a
+        // change, and the only writer is the language picker, which always emits a code.
+        i18n.changeLanguage(value!);
         i18n.localizePage();
     },
 );
@@ -351,7 +341,7 @@ watch(
     () => settings.showAllSerialDevices,
     (value) => {
         setConfig({ showAllSerialDevices: value });
-        PortHandler.setShowAllSerialDevices(value);
+        DeviceHandler.setShowAllSerialDevices(value);
     },
 );
 
@@ -379,7 +369,7 @@ watch(
     },
 );
 
-let uiScalePersistTimer = null;
+let uiScalePersistTimer: ReturnType<typeof setTimeout> | undefined;
 let notificationRequestId = 0;
 
 watch(
@@ -414,7 +404,7 @@ watch(
                     setConfig({ showNotifications: enabled });
                     break;
                 case "denied":
-                    dialog.openInfo(informationDialog.title, informationDialog.text, {
+                    dialog.openInfo(informationDialog.title, informationDialog.text, null, {
                         confirmText: informationDialog.buttonConfirmText,
                     });
                     settings.showNotifications = false;
@@ -430,7 +420,7 @@ watch(
                             setConfig({ showNotifications: true });
                             settings.showNotifications = true;
                         } else {
-                            dialog.openInfo(informationDialog.title, informationDialog.text, {
+                            dialog.openInfo(informationDialog.title, informationDialog.text, null, {
                                 confirmText: informationDialog.buttonConfirmText,
                             });
                         }

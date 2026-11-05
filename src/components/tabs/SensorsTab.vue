@@ -12,7 +12,12 @@
                     <UiBox :title="$t('sensorConfigHardware')" type="neutral" collapsible>
                         <!-- Active Gyro / IMU (API 1.47+) -->
                         <template v-if="showMultiGyro">
-                            <SettingRow v-for="gyro in gyroList" :key="gyro.index" fullWidth>
+                            <SettingRow
+                                v-for="gyro in gyroList"
+                                :key="gyro.index"
+                                data-setting-search-key="sensorConfigActiveGyros"
+                                fullWidth
+                            >
                                 <template #label>
                                     {{ $t("sensorConfigGyroLabel", { 1: gyro.index + 1 }) }}
                                     <span v-if="gyro.name" class="text-dimmed font-normal"
@@ -21,7 +26,7 @@
                                 </template>
                                 <USwitch
                                     :model-value="gyro.enabled"
-                                    @update:model-value="(checked) => toggleGyro(gyro.index, checked)"
+                                    @update:model-value="(checked: boolean) => toggleGyro(gyro.index, checked)"
                                 />
                             </SettingRow>
                         </template>
@@ -47,12 +52,32 @@
                             </template>
                             <USwitch v-model="accHardwareEnabled" />
                         </SettingRow>
-                        <SettingRow :label="magHwName ? '' : $t('configurationMagHardware')">
+                        <SettingRow :label="magHwName ? '' : $t('configurationMagHardware')" fullWidth>
                             <template v-if="magHwName" #label>
                                 {{ $t("configurationMagHardware") }}
                                 <span class="text-dimmed font-normal">&mdash; {{ magHwName }}</span>
                             </template>
                             <USwitch v-model="magHardwareEnabled" />
+                            <USelect
+                                v-if="magHardwareEnabled && magTypeItems.length > 1"
+                                v-model="sensorConfig.mag_hardware"
+                                :items="magTypeItems"
+                                size="xs"
+                                class="min-w-40"
+                            />
+                        </SettingRow>
+                        <SettingRow
+                            v-if="showCanDevice"
+                            :label="$t('dronecanCanDevice')"
+                            :help="$t('dronecanCanDeviceHelp')"
+                        >
+                            <USelect
+                                :model-value="canDevice ?? undefined"
+                                :items="canDeviceOptions"
+                                size="xs"
+                                class="min-w-40"
+                                @update:model-value="canDevice = $event"
+                            />
                         </SettingRow>
                         <SettingRow :label="baroHwName ? '' : $t('configurationBaroHardware')">
                             <template v-if="baroHwName" #label>
@@ -73,6 +98,19 @@
                                 size="xs"
                             />
                         </SettingRow>
+                        <SettingRow
+                            v-if="showRangefinder && sonarHardwareEnabled && rangefinderPortAvailable"
+                            :label="$t('rangefinderSerialPort')"
+                            :help="$t('rangefinderSerialPortHelp')"
+                        >
+                            <USelect
+                                v-model="rangefinderPortIdentifier"
+                                :items="rangefinderPortOptions"
+                                :disabled="!rangefinderPortWritable"
+                                class="min-w-40"
+                                size="xs"
+                            />
+                        </SettingRow>
                         <SettingRow v-if="showOpticalFlow" :label="$t('configurationOpticalflow')" fullWidth>
                             <USwitch v-model="opticalFlowHardwareEnabled" />
                             <USelect
@@ -82,6 +120,33 @@
                                     opticalFlowTypesList
                                         .filter((_, i) => i > 0)
                                         .map((label, i) => ({ label, value: i + 1 }))
+                                "
+                                class="min-w-40"
+                                size="xs"
+                            />
+                        </SettingRow>
+                        <SettingRow
+                            v-if="showOpticalFlow && opticalFlowHardwareEnabled && opticalFlowPortAvailable"
+                            :label="$t('opticalflowSerialPort')"
+                            :help="$t('opticalflowSerialPortHelp')"
+                        >
+                            <USelect
+                                v-model="opticalFlowPortIdentifier"
+                                :items="opticalFlowPortOptions"
+                                :disabled="!opticalFlowPortWritable"
+                                class="min-w-40"
+                                size="xs"
+                            />
+                        </SettingRow>
+                        <SettingRow v-if="showPitot" :label="$t('configurationPitot')">
+                            <USwitch v-model="pitotHardwareEnabled" />
+                            <USelect
+                                v-if="pitotHardwareEnabled"
+                                v-model="sensorConfig.pitot_hardware"
+                                :items="
+                                    pitotTypesList
+                                        .map((label, i) => ({ label, value: i }))
+                                        .filter((item) => item.value !== 1) // exclude PITOT_NONE
                                 "
                                 class="min-w-40"
                                 size="xs"
@@ -97,6 +162,14 @@
                             v-model:yaw="boardAlignment.yaw"
                             label-prefix="configurationBoardAlignment"
                             :step="1"
+                        />
+                        <UButton
+                            v-if="isApi146"
+                            :label="$t('boardAlignmentWizard-Launch')"
+                            :disabled="!hasAccSensor || accNeedsCalibration || !mixerMotorConfigReady"
+                            size="xs"
+                            class="w-fit"
+                            @click="openBoardAlignmentWizard"
                         />
 
                         <!-- Gyro alignment dropdowns (Legacy, API < 1.47) -->
@@ -149,6 +222,7 @@
                             <span>{{ $t("sensorConfigAccNeedsCalibration") }}</span>
                         </div>
                         <UButton
+                            data-setting-search-key="sensorConfigCalibrate"
                             :label="
                                 calibratingAccel ? $t('initialSetupButtonCalibratingText') : $t('sensorConfigCalibrate')
                             "
@@ -242,13 +316,6 @@
                         :aria-label="$t('configurationMagAlignment')"
                         :ui="{ viewport: 'max-h-none' }"
                     />
-                    <UButton
-                        size="xs"
-                        variant="outline"
-                        :label="$t('configurationMagDetectAlignment')"
-                        :disabled="alignDetectPhase === 'collecting'"
-                        @click="startAlignDetection"
-                    />
                 </SettingRow>
 
                 <!-- Mag alignment custom angles -->
@@ -260,338 +327,449 @@
                     label-prefix="configurationMagAlignment"
                 />
 
-                <!-- Inline alignment detection (replaces dialog) -->
-                <div v-if="alignDetectPhase !== 'idle'" class="align-detect-inline">
-                    <!-- Collecting -->
-                    <div v-if="alignDetectPhase === 'collecting'" class="flex items-center gap-3 flex-wrap">
-                        <div class="flex-1 min-w-48">
-                            <div class="mag-align-progress-bar">
-                                <div
-                                    class="mag-align-progress-fill"
-                                    :style="{ width: alignDetectProgress + '%' }"
-                                ></div>
-                            </div>
-                        </div>
-                        <span class="text-xs text-[var(--surface-500)]">{{
-                            $t("sensorConfigAlignSamples", { count: alignDetectSampleCount })
-                        }}</span>
-                        <span
-                            v-if="
-                                alignDetectTiltPercent < ALIGN_TILT_WARN_PERCENT &&
-                                alignDetectSampleCount > ALIGN_TILT_WARN_MIN_SAMPLES
-                            "
-                            class="text-xs text-[var(--warning-500)]"
-                        >
-                            {{ $t("sensorConfigAlignTiltMore") }}
-                        </span>
-                        <UButton size="xs" variant="outline" :label="$t('cancel')" @click="cancelAlignDetection" />
-                    </div>
-                    <!-- Result -->
-                    <div v-else-if="alignDetectPhase === 'result'" class="flex items-center gap-3 flex-wrap">
-                        <span class="text-sm font-semibold text-[var(--primary-500)]">{{
-                            alignDetectResult.label
-                        }}</span>
-                        <span :class="'text-xs font-medium confidence-' + alignDetectConfidenceLevel">
-                            {{ alignDetectResult.confidence }}x {{ alignDetectConfidenceLevel }}
-                        </span>
-                        <UButton size="xs" :label="$t('magAlignmentApply')" @click="applyAlignDetection" />
-                        <UButton
-                            size="xs"
-                            variant="outline"
-                            :label="$t('magCalibrationRetry')"
-                            @click="resetAlignDetection"
-                        />
-                    </div>
-                    <!-- Error -->
-                    <div v-else-if="alignDetectPhase === 'error'" class="flex items-center gap-3">
-                        <span class="text-xs text-[var(--error-500)] font-medium">{{
-                            $t("sensorConfigAlignDetectFailed")
-                        }}</span>
-                        <UButton
-                            size="xs"
-                            variant="outline"
-                            :label="$t('magCalibrationRetry')"
-                            @click="resetAlignDetection"
-                        />
-                    </div>
-                </div>
-
-                <!-- Declination auto-set note (API >= 1.46) -->
-                <div
-                    v-if="isApi146 && declinationNote"
-                    class="flex items-center gap-2 text-xs px-2 py-1.5 rounded bg-[var(--primary-500)]/10 text-[var(--primary-700)]"
-                >
-                    <UIcon name="i-lucide-info" class="size-4 shrink-0" />
-                    <span>{{ declinationNote }}</span>
-                    <UButton
-                        size="2xs"
-                        variant="ghost"
-                        icon="i-lucide-x"
-                        :aria-label="$t('close')"
-                        @click="dismissDeclinationNote"
-                    />
-                </div>
-
-                <!-- Declination warning -->
-                <div
-                    v-if="isApi146 && declinationWarning"
-                    class="flex items-center gap-2 text-xs px-2 py-1.5 rounded bg-[var(--warning-500)]/15 text-[var(--warning-700)]"
-                >
-                    <UIcon name="i-lucide-alert-triangle" class="size-4 shrink-0" />
-                    <span>{{ declinationWarning }}</span>
-                    <UButton
-                        size="2xs"
-                        variant="ghost"
-                        icon="i-lucide-x"
-                        :aria-label="$t('close')"
-                        @click="dismissDeclinationWarning"
-                    />
-                </div>
-
-                <!-- Declination + Inclination + Field Strength (API >= 1.46) -->
-                <div v-if="isApi146" class="flex items-end gap-4 flex-wrap">
-                    <SettingColumn
-                        :label="$t('configurationMagDeclination')"
-                        :help="$t('configurationMagDeclinationHelp')"
+                <!-- API >= 1.47: full mag cal UI (declination, cal editor, check, guided modes) -->
+                <template v-if="calGuidedAvailable">
+                    <!-- Declination auto-set note (API >= 1.46) -->
+                    <div
+                        v-if="isApi146 && declinationNote"
+                        class="flex items-center gap-2 text-xs px-2 py-1.5 rounded bg-[var(--primary-500)]/10 text-[var(--primary-700)]"
                     >
-                        <div class="flex items-center gap-2">
-                            <UInputNumber
-                                v-model="magDeclination"
-                                :step="0.1"
-                                :min="-180"
-                                :max="180"
-                                orientation="vertical"
+                        <UIcon name="i-lucide-info" class="size-4 shrink-0" />
+                        <span>{{ declinationNote }}</span>
+                        <UButton
+                            size="2xs"
+                            variant="ghost"
+                            icon="i-lucide-x"
+                            :aria-label="$t('close')"
+                            @click="dismissDeclinationNote"
+                        />
+                    </div>
+
+                    <!-- Declination warning -->
+                    <div
+                        v-if="isApi146 && declinationWarning"
+                        class="flex items-center gap-2 text-xs px-2 py-1.5 rounded bg-[var(--warning-500)]/15 text-[var(--warning-700)]"
+                    >
+                        <UIcon name="i-lucide-alert-triangle" class="size-4 shrink-0" />
+                        <span>{{ declinationWarning }}</span>
+                        <UButton
+                            size="2xs"
+                            variant="ghost"
+                            icon="i-lucide-x"
+                            :aria-label="$t('close')"
+                            @click="dismissDeclinationWarning"
+                        />
+                    </div>
+
+                    <!-- Declination + Inclination + Field Strength (API >= 1.46) -->
+                    <div v-if="isApi146" class="flex items-end gap-4 flex-wrap">
+                        <SettingColumn
+                            :label="$t('configurationMagDeclination')"
+                            :help="$t('configurationMagDeclinationHelp')"
+                        >
+                            <div class="flex items-center gap-2">
+                                <UInputNumber
+                                    v-model="magDeclination"
+                                    :step="0.1"
+                                    :min="-180"
+                                    :max="180"
+                                    orientation="vertical"
+                                    size="xs"
+                                    class="w-20"
+                                />
+                                <UButton
+                                    size="xs"
+                                    variant="outline"
+                                    :label="
+                                        declinationWarning ? $t('sensorConfigMagUpdate') : $t('sensorConfigMagDetect')
+                                    "
+                                    :disabled="isFetchingDeclination"
+                                    :loading="isFetchingDeclination"
+                                    @click="autoSetDeclination"
+                                />
+                            </div>
+                        </SettingColumn>
+                        <SettingColumn
+                            :label="$t('configurationMagInclination')"
+                            :help="$t('configurationMagInclinationHelp')"
+                        >
+                            <UInput
+                                :model-value="magInclination !== null ? magInclination + '°' : '—'"
+                                disabled
                                 size="xs"
                                 class="w-20"
                             />
+                        </SettingColumn>
+                        <SettingColumn
+                            :label="$t('configurationMagFieldStrengthLabel')"
+                            :help="$t('configurationMagFieldStrengthHelp')"
+                        >
+                            <UInput
+                                :model-value="magFieldStrength !== null ? magFieldStrength + ' nT' : '—'"
+                                disabled
+                                size="xs"
+                                class="w-24"
+                            />
+                        </SettingColumn>
+                    </div>
+
+                    <!-- Mag calibration needed note -->
+                    <div
+                        v-if="magNeedsCalibration"
+                        class="flex items-center gap-2 text-xs px-2 py-1.5 rounded bg-[var(--warning-500)]/15 text-[var(--warning-700)]"
+                    >
+                        <UIcon name="i-lucide-alert-triangle" class="size-4 shrink-0" />
+                        <span>{{ $t("sensorConfigMagNeedsCalibration") }}</span>
+                    </div>
+
+                    <!-- Editable cal offset values -->
+                    <MagCalOffsetEditor
+                        :offsets="cal.firmwareOffsets"
+                        :saving="isSavingCal"
+                        show-save
+                        @save="saveCalValues"
+                    />
+
+                    <!-- Calibrate Magnetometer (inline) -->
+                    <div class="mag-cal-section">
+                        <!-- Idle: check + calibrate buttons -->
+                        <div v-if="cal.phase === 'idle'" class="flex flex-col gap-2">
+                            <div class="flex items-center gap-2">
+                                <UButton
+                                    size="xs"
+                                    variant="outline"
+                                    icon="i-lucide-eye"
+                                    :label="$t('magCalibrationCheck')"
+                                    @click="startCheckMode()"
+                                />
+                                <UFieldGroup size="xs" orientation="horizontal" class="flex!">
+                                    <UButton size="xs" :label="$t('magCalibrationFull')" @click="startFullCal()">
+                                        <template #trailing>
+                                            <HelpIcon :text="$t('magCalibrationFullDesc')" />
+                                        </template>
+                                    </UButton>
+                                    <UDropdownMenu
+                                        v-slot="{ open }"
+                                        :items="calModeItems"
+                                        :content="{ align: 'start' }"
+                                    >
+                                        <UButton
+                                            size="xs"
+                                            :icon="open ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+                                            :aria-label="$t('magCalibrationModeOptions')"
+                                            :title="$t('magCalibrationModeOptions')"
+                                            square
+                                        />
+                                    </UDropdownMenu>
+                                </UFieldGroup>
+                            </div>
+                        </div>
+
+                        <!-- Calibrating -->
+                        <div v-else-if="calIsCalibrating" class="mag-cal-inline-layout">
+                            <div class="mag-cal-inline-steps">
+                                <template v-if="cal.mode === 'full'">
+                                    <div class="mag-cal-step-counter">
+                                        {{ $t("magCalibrationFullTitle") }} —
+                                        {{
+                                            $t("magCalibrationFullStepCounter", {
+                                                n: fullCalStep + 1,
+                                                total: CAL_FULL_STEPS.length,
+                                            })
+                                        }}
+                                    </div>
+                                    <p class="text-sm font-semibold text-center mt-2">
+                                        {{ $t(CAL_FULL_STEPS[fullCalStep]) }}
+                                    </p>
+                                    <p class="text-xs text-[var(--surface-500)] text-center mb-1">
+                                        {{ $t("magCalibrationFullInstruction") }}
+                                    </p>
+                                    <p v-if="cal.coverage" class="text-lg font-bold text-center tabular-nums">
+                                        {{
+                                            $t("magCalibrationFullZones", {
+                                                covered: cal.coverage.covered ?? 0,
+                                                total: cal.coverage.totalFaces ?? 20,
+                                            })
+                                        }}
+                                    </p>
+                                </template>
+                                <template v-else-if="cal.mode === 'check'">
+                                    <div class="mag-cal-step-counter">{{ $t("magCalibrationCheckTitle") }}</div>
+                                    <p class="text-sm text-[var(--surface-600)] text-center my-2">
+                                        {{ $t("magCalibrationCheckInstruction") }}
+                                    </p>
+                                </template>
+                                <template v-else>
+                                    <div class="mag-cal-step-counter">{{ $t("magCalibrationUnguidedTitle") }}</div>
+                                    <p class="text-sm text-[var(--surface-600)] text-center my-2">
+                                        {{ $t("magCalibrationUnguidedInstruction") }}
+                                    </p>
+                                    <p
+                                        v-if="cal.firmwareSecondsRemaining >= 0 && !cal.firmwareDone"
+                                        class="text-lg font-bold text-center tabular-nums"
+                                    >
+                                        {{ cal.firmwareSecondsRemaining }}s
+                                    </p>
+                                    <p v-if="cal.firmwareDone" class="text-xs font-semibold status-ok text-center">
+                                        {{ $t("magCalibrationUnguidedDone") }}
+                                    </p>
+                                </template>
+                                <UProgress
+                                    v-if="cal.mode !== 'check'"
+                                    :model-value="cal.progress"
+                                    :max="100"
+                                    size="sm"
+                                />
+                                <div v-if="cal.quality" class="text-xs font-semibold text-center">
+                                    <span :class="statusClass(cal.quality)"
+                                        >{{ $t(CAL_QUALITY_KEY[cal.quality]) }} ({{ cal.qualityScore }}%)</span
+                                    >
+                                </div>
+                                <div class="flex gap-2 justify-center mt-1">
+                                    <UButton
+                                        size="xs"
+                                        variant="outline"
+                                        :label="$t('magCalibrationCancel')"
+                                        @click="cancelMagCal()"
+                                    />
+                                    <UButton
+                                        size="xs"
+                                        variant="ghost"
+                                        :label="$t('magCalibrationClear')"
+                                        :disabled="cal.sampleCount === 0"
+                                        @click="clearMagCalSamples()"
+                                    />
+                                    <UButton
+                                        v-if="cal.mode === 'full'"
+                                        size="xs"
+                                        :loading="isAcceptingCal"
+                                        :disabled="!fullReady"
+                                        :color="finishButtonColor"
+                                        :label="$t('magCalibrationFullCompute')"
+                                        @click="acceptFullCal()"
+                                    />
+                                </div>
+                                <p
+                                    v-if="cal.mode === 'full' && fullCalError"
+                                    class="text-xs font-semibold status-bad text-center mt-1.5"
+                                    role="alert"
+                                >
+                                    {{ $t("magCalibrationFullRefused", { reason: fullCalError }) }}
+                                </p>
+                                <p
+                                    v-if="cal.mode === 'full'"
+                                    class="text-xs text-[var(--surface-500)] text-center mt-1.5"
+                                >
+                                    {{ $t("magCalibrationFullCoverageHint") }}
+                                </p>
+                                <div class="mag-cal-live-inline">
+                                    <span v-if="cal.mode !== 'check'"
+                                        >{{ $t("magCalibrationSamples") }}: {{ cal.sampleCount }}</span
+                                    >
+                                    <span>X: {{ cal.liveMag.x }}</span>
+                                    <span>Y: {{ cal.liveMag.y }}</span>
+                                    <span>Z: {{ cal.liveMag.z }}</span>
+                                    <span>Field: {{ cal.liveFieldStrength }}</span>
+                                </div>
+                            </div>
+                            <div class="mag-cal-inline-sphere">
+                                <div class="mag-viz-mode-selector">
+                                    <UButton
+                                        v-for="m in MAG_VIZ_MODES"
+                                        :key="m.value"
+                                        size="xs"
+                                        variant="ghost"
+                                        :icon="m.icon"
+                                        :class="{ 'mag-viz-active': magVizMode === m.value }"
+                                        :aria-label="$t(m.label)"
+                                        :title="$t(m.label)"
+                                        square
+                                        @click="magVizMode = m.value"
+                                    />
+                                </div>
+                                <MagSphereView
+                                    :samples="cal.samples"
+                                    :sample-count="cal.sampleCount"
+                                    :sphere-fit="cal.sphereFitResult"
+                                    :active="true"
+                                    :live-mag="cal.liveMag"
+                                    :inclination="magInclination"
+                                    :coverage="cal.coverage"
+                                    :attitude="attitudeRaw"
+                                    :quaternion="attitudeQuaternion"
+                                    :viz-mode="magVizMode"
+                                    :cal-offsets="cal.firmwareOffsets"
+                                />
+                            </div>
+                        </div>
+
+                        <!-- Complete -->
+                        <div v-else-if="cal.phase === 'complete'" class="mag-cal-inline-layout">
+                            <div class="mag-cal-inline-steps">
+                                <p class="text-sm font-semibold status-ok mb-2">
+                                    {{ $t("magCalibrationComplete") }}
+                                </p>
+                                <dl v-if="!calIsFull" class="mag-cal-stats-inline">
+                                    <dt>{{ $t("magCalibrationFirmwareOffsets") }}</dt>
+                                    <dd>{{ calFirmwareOffsetsText }}</dd>
+                                    <dt>{{ $t("magCalibrationSamples") }}</dt>
+                                    <dd>{{ cal.sampleCount }}</dd>
+                                </dl>
+                                <template v-if="calIsFull">
+                                    <dl
+                                        v-if="fullCalResult"
+                                        class="mag-cal-stats-inline mt-2 border-t border-[var(--border-default)] pt-2"
+                                    >
+                                        <dt>{{ $t("magCalibrationFullAlignment") }}</dt>
+                                        <dd>
+                                            {{ fullCalResult.label }}
+                                            <template v-if="fullCalResult.preset === 9">
+                                                ({{
+                                                    $t("magCalibrationFullCustomAngles", {
+                                                        roll: fullCalResult.euler_zyx_deg.roll.toFixed(1),
+                                                        pitch: fullCalResult.euler_zyx_deg.pitch.toFixed(1),
+                                                        yaw: fullCalResult.euler_zyx_deg.yaw.toFixed(1),
+                                                    })
+                                                }})
+                                            </template>
+                                        </dd>
+                                        <dt>{{ $t("magCalibrationFullOffsets") }}</dt>
+                                        <dd>
+                                            {{ fullCalResult.offsets.x }}, {{ fullCalResult.offsets.y }},
+                                            {{ fullCalResult.offsets.z }}
+                                        </dd>
+                                        <dt>{{ $t("magCalibrationFullResidual") }}</dt>
+                                        <dd>{{ fullCalResult.quality?.meanResidualDeg?.toFixed(1) ?? "—" }}&deg;</dd>
+                                        <dt>{{ $t("magCalibrationFullCoverage") }}</dt>
+                                        <dd>
+                                            {{
+                                                cal.coverage
+                                                    ? cal.coverage.covered + "/" + cal.coverage.totalFaces
+                                                    : "—"
+                                            }}
+                                            ({{ cal.sampleCount }} {{ $t("magCalibrationSamples").toLowerCase() }})
+                                        </dd>
+                                    </dl>
+                                    <div class="flex gap-2 justify-center mt-3" v-if="fullCalResult">
+                                        <UButton
+                                            size="xs"
+                                            variant="outline"
+                                            :label="$t('magCalibrationFullCopyCli')"
+                                            @click="copyFullCalCli"
+                                        />
+                                        <UButton
+                                            size="xs"
+                                            :label="$t('magCalibrationFullApply')"
+                                            @click="applyFullCal"
+                                            :disabled="isSavingCal"
+                                            :loading="isSavingCal"
+                                        />
+                                        <UButton
+                                            size="xs"
+                                            variant="outline"
+                                            :label="$t('magCalibrationFullExport')"
+                                            @click="exportFullCalModel"
+                                        />
+                                    </div>
+                                </template>
+                                <div class="flex gap-2 justify-center mt-3">
+                                    <UButton
+                                        size="xs"
+                                        variant="outline"
+                                        :label="$t('magCalibrationRetry')"
+                                        @click="retryAndStartMagCal()"
+                                    />
+                                    <UButton size="xs" variant="outline" :label="$t('close')" @click="retryMagCal()" />
+                                </div>
+                            </div>
+                            <div class="mag-cal-inline-sphere">
+                                <div class="mag-viz-mode-selector">
+                                    <UButton
+                                        v-for="m in MAG_VIZ_MODES"
+                                        :key="m.value"
+                                        size="xs"
+                                        variant="ghost"
+                                        :icon="m.icon"
+                                        :class="{ 'mag-viz-active': magVizMode === m.value }"
+                                        :aria-label="$t(m.label)"
+                                        :title="$t(m.label)"
+                                        square
+                                        @click="magVizMode = m.value"
+                                    />
+                                </div>
+                                <MagSphereView
+                                    :samples="cal.samples"
+                                    :sample-count="cal.sampleCount"
+                                    :sphere-fit="cal.sphereFitResult"
+                                    :active="false"
+                                    :inclination="magInclination"
+                                    :coverage="cal.coverage"
+                                    :attitude="attitudeRaw"
+                                    :quaternion="attitudeQuaternion"
+                                    :viz-mode="magVizMode"
+                                    :cal-offsets="cal.firmwareOffsets"
+                                />
+                            </div>
+                        </div>
+
+                        <!-- Error -->
+                        <div v-else-if="cal.phase === 'error'" class="flex items-center gap-3">
+                            <span class="text-sm text-[var(--error-500)] font-semibold">{{
+                                $t(cal.statusMessage || "magCalibrationError")
+                            }}</span>
                             <UButton
                                 size="xs"
                                 variant="outline"
-                                :label="declinationWarning ? $t('sensorConfigMagUpdate') : $t('sensorConfigMagDetect')"
-                                :disabled="isFetchingDeclination"
-                                :loading="isFetchingDeclination"
-                                @click="autoSetDeclination"
+                                :label="$t('magCalibrationRetry')"
+                                @click="retryAndStartMagCal()"
+                            />
+                            <UButton
+                                size="xs"
+                                variant="ghost"
+                                :label="$t('magCalibrationCancel')"
+                                @click="retryMagCal()"
                             />
                         </div>
-                    </SettingColumn>
-                    <SettingColumn
-                        :label="$t('configurationMagInclination')"
-                        :help="$t('configurationMagInclinationHelp')"
+                    </div>
+                </template>
+
+                <!-- API < 1.47: legacy firmware calibrate button only -->
+                <template v-else>
+                    <UButton
+                        size="xs"
+                        class="w-fit"
+                        :label="legacyCalButtonLabel"
+                        :loading="calIsCalibrating || cal.starting"
+                        @click="startLegacyFirmwareCal()"
                     >
-                        <UInput
-                            :model-value="magInclination !== null ? magInclination + '°' : '—'"
-                            disabled
-                            size="xs"
-                            class="w-20"
-                        />
-                    </SettingColumn>
-                    <SettingColumn
-                        :label="$t('configurationMagFieldStrengthLabel')"
-                        :help="$t('configurationMagFieldStrengthHelp')"
-                    >
-                        <UInput
-                            :model-value="magFieldStrength !== null ? magFieldStrength + ' nT' : '—'"
-                            disabled
-                            size="xs"
-                            class="w-24"
-                        />
-                    </SettingColumn>
-                </div>
-
-                <!-- Mag calibration needed note -->
-                <div
-                    v-if="magNeedsCalibration"
-                    class="flex items-center gap-2 text-xs px-2 py-1.5 rounded bg-[var(--warning-500)]/15 text-[var(--warning-700)]"
-                >
-                    <UIcon name="i-lucide-alert-triangle" class="size-4 shrink-0" />
-                    <span>{{ $t("sensorConfigMagNeedsCalibration") }}</span>
-                </div>
-
-                <!-- Calibrate Magnetometer (inline) -->
-                <div class="mag-cal-section">
-                    <!-- Idle: calibrate button with mode dropdown -->
-                    <div v-if="cal.phase === 'idle'" class="flex items-center gap-2">
-                        <UFieldGroup size="xs" orientation="horizontal" class="flex!">
-                            <UButton size="xs" :label="$t('sensorConfigCalibrate')" @click="startMagCal(false)">
-                                <template #trailing>
-                                    <HelpIcon :text="$t('initialSetupCalibrateMagText')" />
-                                </template>
-                            </UButton>
-                            <UDropdownMenu v-slot="{ open }" :items="calModeItems" :content="{ align: 'start' }">
-                                <UButton
-                                    size="xs"
-                                    :icon="open ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
-                                    :aria-label="$t('magCalibrationModeOptions')"
-                                    :title="$t('magCalibrationModeOptions')"
-                                    square
-                                />
-                            </UDropdownMenu>
-                        </UFieldGroup>
+                        <template #trailing>
+                            <HelpIcon :text="$t('initialSetupCalibrateMagText')" />
+                        </template>
+                    </UButton>
+                    <!-- Always rendered so screen readers pick up the messages swapped in below. -->
+                    <div class="legacy-mag-cal-status" aria-live="polite">
+                        <p v-if="calIsCalibrating" class="text-xs text-[var(--surface-600)]">
+                            {{ $t(cal.statusMessage) }}
+                        </p>
+                        <!-- Restarting from 'complete' or 'error' keeps that phase until the offset read returns. -->
+                        <p v-else-if="cal.starting" class="text-xs text-[var(--surface-600)]">
+                            {{ $t("magCalibrationLegacyStarting") }}
+                        </p>
+                        <p
+                            v-else-if="cal.mode === 'quick' && cal.phase === 'complete'"
+                            class="text-xs font-semibold status-ok"
+                        >
+                            {{ $t("magCalibrationUnguidedDone") }}
+                        </p>
+                        <p
+                            v-else-if="cal.mode === 'quick' && cal.phase === 'error'"
+                            class="text-xs status-bad"
+                            role="alert"
+                        >
+                            {{ $t(cal.statusMessage || "magCalibrationError") }}
+                        </p>
                     </div>
-
-                    <!-- Calibrating -->
-                    <div v-else-if="calIsCalibrating" class="mag-cal-inline-layout">
-                        <div class="mag-cal-inline-steps">
-                            <template v-if="!calUnguidedMode">
-                                <div class="mag-cal-step-counter">
-                                    {{
-                                        $t("magCalibrationStepOf", {
-                                            current: calCurrentStep + 1,
-                                            total: CAL_TOTAL_STEPS,
-                                        })
-                                    }}
-                                    <span v-if="calAutoStep" class="text-[var(--surface-400)]"
-                                        >({{ calStepCountdown }}s)</span
-                                    >
-                                </div>
-                                <MagOrientationDiagram :step="calCurrentStep" />
-                                <div class="text-sm font-semibold text-center">
-                                    {{ $t(CAL_ORIENTATION_STEPS[calCurrentStep].i18n) }}
-                                </div>
-                            </template>
-                            <template v-else>
-                                <div class="mag-cal-step-counter">{{ $t("magCalibrationUnguidedTitle") }}</div>
-                                <p class="text-sm text-[var(--surface-600)] text-center my-2">
-                                    {{ $t("magCalibrationUnguidedInstruction") }}
-                                </p>
-                                <p v-if="cal.firmwareDone" class="text-xs font-semibold quality-good text-center">
-                                    {{ $t("magCalibrationUnguidedDone") }}
-                                </p>
-                            </template>
-                            <div class="mag-cal-progress-bar">
-                                <div class="mag-cal-progress-fill" :style="{ width: cal.progress + '%' }"></div>
-                            </div>
-                            <div v-if="cal.quality" class="text-xs font-semibold text-center">
-                                <span :class="'quality-' + cal.quality">{{ $t(CAL_QUALITY_KEY[cal.quality]) }}</span>
-                            </div>
-                            <div class="flex gap-2 justify-center mt-1">
-                                <UButton
-                                    size="xs"
-                                    variant="outline"
-                                    :label="$t('magCalibrationCancel')"
-                                    @click="cancelMagCal()"
-                                />
-                                <UButton
-                                    v-if="!calUnguidedMode && calCurrentStep < CAL_TOTAL_STEPS - 1"
-                                    size="xs"
-                                    :label="$t('magCalibrationNextStep')"
-                                    @click="nextMagCalStep()"
-                                />
-                                <UButton
-                                    v-if="!calUnguidedMode && calCurrentStep === CAL_TOTAL_STEPS - 1"
-                                    size="xs"
-                                    :label="$t('magCalibrationFinish')"
-                                    @click="finishMagCal()"
-                                />
-                            </div>
-                            <div class="mag-cal-live-inline">
-                                <span>{{ $t("magCalibrationSamples") }}: {{ cal.sampleCount }}</span>
-                                <span>X: {{ cal.liveMag.x }}</span>
-                                <span>Y: {{ cal.liveMag.y }}</span>
-                                <span>Z: {{ cal.liveMag.z }}</span>
-                                <span>RSS: {{ cal.liveFieldStrength }}</span>
-                            </div>
-                        </div>
-                        <div class="mag-cal-inline-sphere">
-                            <div class="mag-viz-mode-selector">
-                                <UButton
-                                    v-for="m in MAG_VIZ_MODES"
-                                    :key="m.value"
-                                    size="xs"
-                                    variant="ghost"
-                                    :icon="m.icon"
-                                    :class="{ 'mag-viz-active': magVizMode === m.value }"
-                                    :aria-label="$t(m.label)"
-                                    :title="$t(m.label)"
-                                    square
-                                    @click="magVizMode = m.value"
-                                />
-                            </div>
-                            <MagSphereView
-                                :samples="cal.samples"
-                                :sphere-fit="cal.sphereFitResult"
-                                :active="true"
-                                :live-mag="cal.liveMag"
-                                :inclination="calGeoRef?.inclination ?? null"
-                                :coverage="cal.coverage"
-                                :attitude="attitudeRaw"
-                                :viz-mode="magVizMode"
-                            />
-                        </div>
-                    </div>
-
-                    <!-- Complete -->
-                    <div v-else-if="cal.phase === 'complete'" class="mag-cal-inline-layout">
-                        <div class="mag-cal-inline-steps">
-                            <p class="text-sm font-semibold quality-good mb-2">{{ $t("magCalibrationComplete") }}</p>
-                            <dl class="mag-cal-stats-inline">
-                                <dt>{{ $t("magCalibrationFirmwareOffsets") }}</dt>
-                                <dd>{{ calFirmwareOffsetsText }}</dd>
-                                <dt>{{ $t("magCalibrationSphereOffsets") }}</dt>
-                                <dd>{{ calOffsetsText }}</dd>
-                                <dt>{{ $t("magCalibrationSamples") }}</dt>
-                                <dd>{{ cal.sampleCount }}</dd>
-                                <dt>{{ $t("magCalibrationResidual") }}</dt>
-                                <dd>{{ calResidualText }}</dd>
-                                <dt>{{ $t("magCalibrationQuality") }}</dt>
-                                <dd>
-                                    <span v-if="cal.quality" :class="'quality-' + cal.quality">{{
-                                        $t(CAL_QUALITY_KEY[cal.quality])
-                                    }}</span>
-                                    <span v-else>&mdash;</span>
-                                </dd>
-                            </dl>
-                            <div class="flex gap-2 justify-center mt-3">
-                                <UButton
-                                    size="xs"
-                                    variant="outline"
-                                    :label="$t('magCalibrationRetry')"
-                                    @click="retryAndStartMagCal()"
-                                />
-                                <UButton size="xs" variant="outline" :label="$t('close')" @click="retryMagCal()" />
-                            </div>
-                        </div>
-                        <div class="mag-cal-inline-sphere">
-                            <div class="mag-viz-mode-selector">
-                                <UButton
-                                    v-for="m in MAG_VIZ_MODES"
-                                    :key="m.value"
-                                    size="xs"
-                                    variant="ghost"
-                                    :icon="m.icon"
-                                    :class="{ 'mag-viz-active': magVizMode === m.value }"
-                                    :aria-label="$t(m.label)"
-                                    :title="$t(m.label)"
-                                    square
-                                    @click="magVizMode = m.value"
-                                />
-                            </div>
-                            <MagSphereView
-                                :samples="cal.samples"
-                                :sphere-fit="cal.sphereFitResult"
-                                :active="false"
-                                :inclination="calGeoRef?.inclination ?? null"
-                                :coverage="cal.coverage"
-                                :attitude="attitudeRaw"
-                                :viz-mode="magVizMode"
-                            />
-                        </div>
-                    </div>
-
-                    <!-- Error -->
-                    <div v-else-if="cal.phase === 'error'" class="flex items-center gap-3">
-                        <span class="text-sm text-[var(--error-500)] font-semibold">{{
-                            $t(cal.statusMessage || "magCalibrationError")
-                        }}</span>
-                        <UButton
-                            size="xs"
-                            variant="outline"
-                            :label="$t('magCalibrationRetry')"
-                            @click="retryAndStartMagCal()"
-                        />
-                        <UButton size="xs" variant="ghost" :label="$t('magCalibrationCancel')" @click="retryMagCal()" />
-                    </div>
-                </div>
+                </template>
             </UiBox>
 
             <!-- LIVE SENSOR DATA -->
@@ -621,38 +799,104 @@
             <div class="content_toolbar toolbar_fixed_bottom">
                 <UButton
                     :label="$t('configurationButtonSave')"
-                    :disabled="!dirty"
+                    :disabled="!canSave"
                     :loading="isSaving"
                     @click="saveConfig"
                 />
             </div>
+
+            <!-- MANUAL LOCATION FALLBACK DIALOG -->
+            <UModal
+                v-model:open="manualLocationModalOpen"
+                :title="$t('magCalibrationManualLocationTitle')"
+                :close="true"
+                :dismissible="true"
+            >
+                <template #body>
+                    <div class="flex flex-col gap-3">
+                        <p class="text-sm text-dimmed leading-relaxed">
+                            {{ $t("magCalibrationManualLocationPrompt") }}
+                        </p>
+                        <UInput
+                            v-model="manualCoordsInput"
+                            :aria-label="$t('magCalibrationManualLocationTitle')"
+                            :placeholder="$t('magCalibrationManualLocationPlaceholder')"
+                            autofocus
+                            @keydown.enter="submitManualLocation"
+                        />
+                        <p v-if="manualCoordsError" class="text-xs text-error" role="alert">
+                            {{ manualCoordsError }}
+                        </p>
+                    </div>
+                </template>
+                <template #footer>
+                    <div class="flex justify-end gap-2 w-full">
+                        <UButton
+                            color="neutral"
+                            variant="soft"
+                            :label="$t('magCalibrationCancel')"
+                            @click="manualLocationModalOpen = false"
+                        />
+                        <UButton
+                            :label="
+                                manualLocationAction === 'fullCal'
+                                    ? $t('magCalibrationFullCompute')
+                                    : $t('sensorConfigMagUpdate')
+                            "
+                            @click="submitManualLocation"
+                        />
+                    </div>
+                </template>
+            </UModal>
         </div>
     </BaseTab>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
+import type { Quaternion, SensorAlignment, SensorConfigActive } from "@/stores/fc.types";
 import semver from "semver";
 import { useFlightControllerStore } from "@/stores/fc";
-import { useNavigationStore } from "@/stores/navigation";
 import { useReboot } from "@/composables/useReboot";
-import MSP from "../../js/msp";
-import MSPCodes from "../../js/msp/MSPCodes";
-import { mspHelper } from "../../js/msp/MSPHelper.js";
+import { useIsMounted } from "@/composables/useIsMounted";
+import { useDirtyState } from "@/composables/useDirtyState";
+import { useFeaturePort } from "@/composables/ports/useFeaturePort";
+import { usePortConflicts } from "@/composables/ports/usePortConflicts";
+import { useSaving, withSaveFailureMessage } from "@/composables/useSaving";
+import { runTabLoad } from "@/composables/useTabLoad";
+import { useSensorsData } from "@/composables/sensors/useSensorsData";
 import { gui_log } from "../../js/gui_log";
 import { i18n } from "../../js/localization";
-import { API_VERSION_1_46, API_VERSION_1_47 } from "../../js/data_storage";
+import { ipCoordinates } from "../../js/utils/ipGeolocation";
+import { API_VERSION_1_46, API_VERSION_1_47, API_VERSION_1_48, API_VERSION_1_49 } from "../../js/data_storage";
 import { have_sensor } from "../../js/sensor_helpers";
 import { bit_check, bit_set, bit_clear } from "../../js/bit";
-import { sensorTypes } from "../../js/sensor_types";
-import { useMagCalibration, computeDeclination, getGeoReference } from "../../composables/useMagCalibration";
-import { detectAlignment } from "../../js/utils/magAlignment";
-import { get as getConfig, set as setConfig } from "../../js/ConfigStorage";
+import { sensorTypes, type SensorKind, type SensorTypes } from "../../js/sensor_types";
+import { useDronecanDevice } from "@/composables/useDronecanDevice";
+import {
+    useMagCalibration,
+    computeDeclination,
+    getGeoReference,
+    parseCoordinates,
+    type GeoReference,
+    type MagVizMode,
+    type Vec3,
+} from "../../composables/useMagCalibration";
+import { isMspCliSupported } from "../../composables/useMspCliSession";
+import { degToRad } from "../../js/utils/common";
+import { useDialog } from "@/composables/useDialog";
+import {
+    characterizeTumble,
+    currentMatrixOf,
+    isFirmwareCustomMagAlignCapable,
+    MIN_FC_VERSION_FOR_CUSTOM_MAG_ALIGN,
+    type TumbleCharacterization,
+} from "../../js/utils/magCharacterizationCompute";
+import { buildCharacterizationModel } from "../../js/utils/magModelExport";
 import { useTimeout } from "../../composables/useTimeout";
 import { useInterval } from "../../composables/useInterval";
 import Model from "../../js/model";
-import GUI from "../../js/gui";
-import { flightIndicator } from "../../../libraries/flightIndicators";
+import { flightIndicator } from "../../js/flightIndicators";
 import BaseTab from "./BaseTab.vue";
 import UiBox from "../elements/UiBox.vue";
 import SettingRow from "../elements/SettingRow.vue";
@@ -661,44 +905,80 @@ import AlignmentAngles from "../elements/AlignmentAngles.vue";
 import HelpIcon from "../elements/HelpIcon.vue";
 import WikiButton from "../elements/WikiButton.vue";
 import MagSphereView from "../dialogs/mag-calibration/MagSphereView.vue";
-import MagOrientationDiagram from "../dialogs/mag-calibration/MagOrientationDiagram.vue";
+import MagCalOffsetEditor from "../dialogs/mag-calibration/MagCalOffsetEditor.vue";
 import LiveSensorPanel from "./sensors/LiveSensorPanel.vue";
 
 const fcStore = useFlightControllerStore();
-const navigationStore = useNavigationStore();
-const { reboot } = useReboot();
+const { saveAndReboot } = useReboot();
 
-const isSaving = ref(false);
-const isMounted = ref(true);
+// From API 1.49 each of these owns its own UART. Both still set the same FUNCTION_LIDAR bit in the
+// synthesised mask, which is why neither can be read back from it — the setting is the only thing
+// that says which port belongs to which sensor.
+const {
+    available: rangefinderPortAvailable,
+    writable: rangefinderPortWritable,
+    options: rangefinderPortOptions,
+    selectedIdentifier: rangefinderPortIdentifier,
+    conflict: rangefinderPortConflict,
+    selection: rangefinderPortSelection,
+    load: loadRangefinderPort,
+    write: writeRangefinderPort,
+} = useFeaturePort({ setting: "rangefinder_uart" });
+
+const {
+    available: opticalFlowPortAvailable,
+    writable: opticalFlowPortWritable,
+    options: opticalFlowPortOptions,
+    selectedIdentifier: opticalFlowPortIdentifier,
+    conflict: opticalFlowPortConflict,
+    selection: opticalFlowPortSelection,
+    load: loadOpticalFlowPort,
+    write: writeOpticalFlowPort,
+} = useFeaturePort({ setting: "opticalflow_uart" });
+
+const { confirmPortConflicts } = usePortConflicts(
+    () => [rangefinderPortConflict, opticalFlowPortConflict],
+    () => [rangefinderPortSelection, opticalFlowPortSelection],
+);
+
+const { isSaving, runSave } = useSaving();
+const isMounted = useIsMounted();
 
 // --- Constants ---
 const SENSOR_ALIGN_CUSTOM = 9;
 const GPS_COORD_SCALE = 1e7;
-const IP_GEOLOCATION_URL = "https://ipapi.co/json/";
-const IP_GEOLOCATION_TIMEOUT_MS = 10000;
+const BROWSER_GEOLOCATION_TIMEOUT_MS = 15000;
 const ACC_CALIBRATION_TIMEOUT_MS = 2000;
 const ACC_NEEDS_CALIBRATION_BIT = 0;
 const ATTITUDE_POLL_MS = 33;
-const CONFIDENCE_HIGH = 5;
-const CONFIDENCE_MEDIUM = 2;
-const ALIGN_TILT_WARN_PERCENT = 30;
-const ALIGN_TILT_WARN_MIN_SAMPLES = 20;
-const IP_GEOLOCATION_CONSENT_KEY = "preflight_ip_geolocation_consent";
 
+// Wizard needs mixer + motor_count for the craft mesh and hydrated boardAlignment
+// for its starting angles — keep the launch button off until loadConfig finishes both.
+const mixerMotorConfigReady = ref(false);
+
+const isApi149 = computed(() => fcStore.config?.apiVersion && semver.gte(fcStore.config.apiVersion, API_VERSION_1_49));
+const isApi148 = computed(() => fcStore.config?.apiVersion && semver.gte(fcStore.config.apiVersion, API_VERSION_1_48));
 const isApi147 = computed(() => fcStore.config?.apiVersion && semver.gte(fcStore.config.apiVersion, API_VERSION_1_47));
 const isApi146 = computed(() => fcStore.config?.apiVersion && semver.gte(fcStore.config.apiVersion, API_VERSION_1_46));
+const {
+    loadSensorsConfig,
+    sendSensorsConfig,
+    loadGpsData,
+    startAccCalibration,
+    loadBoardInfo,
+    requestAttitude,
+    requestAltitude,
+    requestAttitudeQuaternion,
+} = useSensorsData(isApi146, isApi147);
 
-function roundOneDp(val) {
+function roundOneDp(val: number) {
     return Math.round(val * 10) / 10;
 }
 
 onUnmounted(() => {
-    isMounted.value = false;
     removeAllIntervals();
     disposeModel();
-    alignDetectPhase.value = "idle";
-    cleanupAlignDetection();
-    clearCalAutoStepTimer();
+    clearFullStepTimer();
     if (calIsCalibrating.value) {
         cal.cancelCalibration();
     }
@@ -712,6 +992,7 @@ const sensorConfig = reactive({
     mag_hardware: 0,
     sonar_hardware: 0,
     opticalflow_hardware: 0,
+    pitot_hardware: 0,
 });
 
 const accHardwareEnabled = computed({
@@ -728,15 +1009,77 @@ const baroHardwareEnabled = computed({
     },
 });
 
+// mag_hardware is a firmware enum, not a boolean: 0 = AUTO, 1 = NONE, and the rest name a driver.
+// The switch owns only NONE. Which driver is a separate choice because AUTO does not probe every
+// one of them - DRONECAN is explicitly excluded from autodetection, so naming it is the only way
+// to reach it.
+const MAG_HARDWARE_AUTO = 0;
+const MAG_HARDWARE_NONE = 1;
+
+// Remembered so toggling the mag off and back on returns to the driver that was selected. Without
+// this, the switch wrote AUTO on every re-enable and silently discarded an explicit DRONECAN pick,
+// which AUTO then never detects.
+let lastMagHardware = MAG_HARDWARE_AUTO;
+
 const magHardwareEnabled = computed({
-    get: () => sensorConfig.mag_hardware !== 1,
+    get: () => sensorConfig.mag_hardware !== MAG_HARDWARE_NONE,
     set: (val) => {
-        sensorConfig.mag_hardware = val ? 0 : 1;
+        if (val) {
+            sensorConfig.mag_hardware = lastMagHardware;
+            return;
+        }
+        lastMagHardware = sensorConfig.mag_hardware;
+        sensorConfig.mag_hardware = MAG_HARDWARE_NONE;
     },
 });
 
-const sonarTypesList = ref([]);
-const opticalFlowTypesList = ref([]);
+const magTypesList = ref<string[]>([]);
+const pitotTypesList = ref<string[]>([]);
+
+// A DroneCAN compass is inert until the stack is running, and dronecan_enabled is off by default.
+// Choosing DRONECAN above is the request to run it, so saving turns it on; there is no separate
+// switch to miss.
+const {
+    supported: dronecanSupported,
+    enabled: dronecanEnabled,
+    deviceOptions: canDeviceOptions,
+    selectedDevice: canDevice,
+    load: loadDronecan,
+    write: writeDronecan,
+} = useDronecanDevice();
+
+const magDronecanIndex = computed(() => magTypesList.value.indexOf("DRONECAN"));
+const pitotDronecanIndex = computed(() => pitotTypesList.value.indexOf("DRONECAN"));
+
+// Every DroneCAN device this tab can configure, not just the compass: the airspeed list carries
+// DRONECAN too, and picking it there has to bring the stack up just the same.
+const dronecanSelected = computed(
+    () =>
+        dronecanSupported.value &&
+        ((magDronecanIndex.value >= 0 && sensorConfig.mag_hardware === magDronecanIndex.value) ||
+            (pitotDronecanIndex.value >= 0 && sensorConfig.pitot_hardware === pitotDronecanIndex.value)),
+);
+
+// The bus is a real choice and belongs wherever a DroneCAN device is set up -- a board with a
+// serial GPS and a DroneCAN compass never opens the GPS tab's copy of this row.
+const showCanDevice = computed(() => dronecanSelected.value && canDeviceOptions.value.length > 1);
+
+// AUTO plus every driver this firmware carries; NONE is the switch's job, so it is left out. The
+// names come from the FC's own table via `sensor_hardware`, which omits drivers that were not
+// compiled in - so DRONECAN is offered exactly when the board can actually use it.
+const magTypeItems = computed(() =>
+    magTypesList.value.map((label, value) => ({ label, value })).filter(({ value }) => value !== MAG_HARDWARE_NONE),
+);
+
+const pitotHardwareEnabled = computed({
+    get: () => sensorConfig.pitot_hardware !== 1,
+    set: (val) => {
+        sensorConfig.pitot_hardware = val ? 0 : 1;
+    },
+});
+
+const sonarTypesList = ref<string[]>([]);
+const opticalFlowTypesList = ref<string[]>([]);
 
 const sonarHardwareEnabled = computed({
     get: () => sensorConfig.sonar_hardware !== 0,
@@ -763,6 +1106,32 @@ const boardAlignment = reactive({
     yaw: 0,
 });
 
+const dialog = useDialog();
+
+function openBoardAlignmentWizard() {
+    dialog.open(
+        "BoardAlignmentWizardDialog",
+        {
+            currentAlignment: {
+                roll: boardAlignment.roll,
+                pitch: boardAlignment.pitch,
+                yaw: boardAlignment.yaw,
+            },
+        },
+        {
+            apply: async ({ roll, pitch, yaw }: { roll: number; pitch: number; yaw: number }) => {
+                boardAlignment.roll = roll;
+                boardAlignment.pitch = pitch;
+                boardAlignment.yaw = yaw;
+                dialog.close();
+                await nextTick();
+                await saveConfig();
+            },
+            close: () => dialog.close(),
+        },
+    );
+}
+
 // --- Accelerometer Trim ---
 
 const accelTrims = reactive({
@@ -772,7 +1141,36 @@ const accelTrims = reactive({
 
 // --- Gyro / IMU ---
 
-const sensorAlignment = reactive({
+// The tab's editable copy of fcStore.sensorAlignment. The per-gyro angles stay optional: no MSP
+// payload carries them, so they are undefined until this tab has saved them once.
+type SensorAlignmentForm = Required<
+    Pick<
+        SensorAlignment,
+        | "gyro_to_use"
+        | "gyro_1_align"
+        | "gyro_2_align"
+        | "align_mag"
+        | "mag_align_roll"
+        | "mag_align_pitch"
+        | "mag_align_yaw"
+        | "gyro_align"
+        | "gyro_enable_mask"
+        | "gyro_align_roll"
+        | "gyro_align_pitch"
+        | "gyro_align_yaw"
+    >
+> &
+    Pick<
+        SensorAlignment,
+        | "gyro_1_align_roll"
+        | "gyro_1_align_pitch"
+        | "gyro_1_align_yaw"
+        | "gyro_2_align_roll"
+        | "gyro_2_align_pitch"
+        | "gyro_2_align_yaw"
+    >;
+
+const sensorAlignment = reactive<SensorAlignmentForm>({
     gyro_to_use: 0,
     gyro_1_align: 0,
     gyro_2_align: 0,
@@ -799,8 +1197,9 @@ const showMultiGyro = ref(false);
 const showGyro1Align = ref(false);
 const showGyro2Align = ref(false);
 const showMagAlign = ref(false);
+const showPitot = ref(false);
 
-const sensorTypesData = ref(null);
+const sensorTypesData = ref<SensorTypes | null>(null);
 
 const gyroHwName = ref("");
 const accHwName = ref("");
@@ -814,7 +1213,7 @@ function resolveSensorNames() {
         return;
     }
 
-    function resolve(sensorKey, typeKey) {
+    const resolve = (sensorKey: keyof SensorConfigActive, typeKey: SensorKind) => {
         const hw = active[sensorKey];
         if (hw === undefined || hw === 0xff) {
             return "";
@@ -824,7 +1223,7 @@ function resolveSensorNames() {
             return "";
         }
         return name;
-    }
+    };
 
     if (!isApi147.value) {
         gyroHwName.value = resolve("gyro_hardware", "gyro");
@@ -880,7 +1279,7 @@ const gyroList = computed(() => {
     return gyros;
 });
 
-function toggleGyro(index, enabled) {
+function toggleGyro(index: number, enabled: boolean) {
     if (enabled) {
         sensorAlignment.gyro_enable_mask = bit_set(sensorAlignment.gyro_enable_mask, index);
     } else {
@@ -924,193 +1323,11 @@ const gyroAlignSelectItems = computed(() => {
     return items;
 });
 
-// --- Inline Alignment Detection (replaces dialog) ---
-
-const ALIGN_POLL_MS = 100;
-const ALIGN_TARGET_SAMPLES = 150;
-const ALIGN_TIMEOUT_MS = 15000;
-const ALIGN_MOVEMENT_THRESHOLD = 5;
-const ALIGN_TILT_THRESHOLD_DEG = 15;
-
-const alignDetectPhase = ref("idle"); // idle | collecting | result | error
-const alignDetectProgress = ref(0);
-const alignDetectSampleCount = ref(0);
-const alignDetectResult = ref(null);
-const alignDetectTiltPercent = ref(0);
-
-let alignSamples = [];
-let alignImuTimeout = null;
-let alignAttTimeout = null;
-let alignMovementInterval = null;
-let alignLastMag = null;
-let alignLastMovement = 0;
-let alignCurrentRoll = 0;
-let alignCurrentPitch = 0;
-let alignTiltedCount = 0;
-
-const alignDetectConfidenceLevel = computed(() => {
-    if (!alignDetectResult.value) {
-        return "none";
-    }
-    if (alignDetectResult.value.confidence >= CONFIDENCE_HIGH) {
-        return "high";
-    }
-    if (alignDetectResult.value.confidence > CONFIDENCE_MEDIUM) {
-        return "medium";
-    }
-    return "low";
-});
-
-function startAlignDetection() {
-    alignSamples = [];
-    alignDetectSampleCount.value = 0;
-    alignDetectProgress.value = 0;
-    alignDetectResult.value = null;
-    alignLastMag = null;
-    alignLastMovement = Date.now();
-    alignCurrentRoll = fcStore.sensorData.kinematics[0];
-    alignCurrentPitch = fcStore.sensorData.kinematics[1];
-    alignTiltedCount = 0;
-    alignDetectTiltPercent.value = 0;
-    alignDetectPhase.value = "collecting";
-
-    function pollAtt() {
-        if (!isMounted.value || alignDetectPhase.value !== "collecting") {
-            return;
-        }
-        MSP.send_message(MSPCodes.MSP_ATTITUDE, false, false, () => {
-            if (!isMounted.value || alignDetectPhase.value !== "collecting") {
-                return;
-            }
-            alignCurrentRoll = fcStore.sensorData.kinematics[0];
-            alignCurrentPitch = fcStore.sensorData.kinematics[1];
-            alignAttTimeout = setTimeout(pollAtt, ALIGN_POLL_MS);
-        });
-    }
-
-    function pollImu() {
-        if (!isMounted.value || alignDetectPhase.value !== "collecting") {
-            return;
-        }
-        MSP.send_message(MSPCodes.MSP_RAW_IMU, false, false, () => {
-            onAlignImuData();
-            if (isMounted.value && alignDetectPhase.value === "collecting") {
-                alignImuTimeout = setTimeout(pollImu, ALIGN_POLL_MS);
-            }
-        });
-    }
-
-    pollAtt();
-    pollImu();
-
-    alignMovementInterval = setInterval(() => {
-        if (Date.now() - alignLastMovement > ALIGN_TIMEOUT_MS) {
-            cleanupAlignDetection();
-            alignDetectPhase.value = "error";
-        }
-    }, 1000);
-}
-
-function onAlignImuData() {
-    if (alignDetectPhase.value !== "collecting") {
-        return;
-    }
-
-    const mx = fcStore.sensorData.magnetometer[0];
-    const my = fcStore.sensorData.magnetometer[1];
-    const mz = fcStore.sensorData.magnetometer[2];
-    if (mx === 0 && my === 0 && mz === 0) {
-        return;
-    }
-
-    if (
-        alignLastMag === null ||
-        Math.abs(mx - alignLastMag[0]) > ALIGN_MOVEMENT_THRESHOLD ||
-        Math.abs(my - alignLastMag[1]) > ALIGN_MOVEMENT_THRESHOLD ||
-        Math.abs(mz - alignLastMag[2]) > ALIGN_MOVEMENT_THRESHOLD
-    ) {
-        alignLastMovement = Date.now();
-    }
-    alignLastMag = [mx, my, mz];
-
-    alignSamples.push({ mag: [mx, my, mz], roll: alignCurrentRoll, pitch: alignCurrentPitch });
-    alignDetectSampleCount.value = alignSamples.length;
-
-    const tilt = Math.hypot(alignCurrentRoll, alignCurrentPitch);
-    if (tilt > ALIGN_TILT_THRESHOLD_DEG) {
-        alignTiltedCount++;
-    }
-    alignDetectTiltPercent.value =
-        alignSamples.length > 0 ? Math.round((alignTiltedCount / alignSamples.length) * 100) : 0;
-
-    alignDetectProgress.value = Math.min(100, Math.round((alignSamples.length / ALIGN_TARGET_SAMPLES) * 100));
-
-    if (alignSamples.length >= ALIGN_TARGET_SAMPLES) {
-        finishAlignDetection();
-    }
-}
-
-function finishAlignDetection() {
-    cleanupAlignDetection();
-
-    const customAngles =
-        sensorAlignment.align_mag === SENSOR_ALIGN_CUSTOM
-            ? {
-                roll: sensorAlignment.mag_align_roll,
-                pitch: sensorAlignment.mag_align_pitch,
-                yaw: sensorAlignment.mag_align_yaw,
-            }
-            : null;
-
-    const detection = detectAlignment(alignSamples, sensorAlignment.align_mag, customAngles);
-    if (detection.error) {
-        alignDetectPhase.value = "error";
-        return;
-    }
-
-    alignDetectResult.value = detection;
-    alignDetectPhase.value = "result";
-}
-
-function cancelAlignDetection() {
-    cleanupAlignDetection();
-    alignDetectPhase.value = "idle";
-}
-
-function applyAlignDetection() {
-    if (alignDetectResult.value) {
-        sensorAlignment.align_mag = alignDetectResult.value.alignment;
-    }
-    resetAlignDetection();
-}
-
-function resetAlignDetection() {
-    alignDetectPhase.value = "idle";
-    alignDetectResult.value = null;
-    alignDetectProgress.value = 0;
-    alignDetectSampleCount.value = 0;
-}
-
-function cleanupAlignDetection() {
-    if (alignImuTimeout !== null) {
-        clearTimeout(alignImuTimeout);
-        alignImuTimeout = null;
-    }
-    if (alignAttTimeout !== null) {
-        clearTimeout(alignAttTimeout);
-        alignAttTimeout = null;
-    }
-    if (alignMovementInterval !== null) {
-        clearInterval(alignMovementInterval);
-        alignMovementInterval = null;
-    }
-}
-
 // --- Magnetometer ---
 
 const magDeclination = ref(0);
-const magInclination = ref(null);
-const magFieldStrength = ref(null);
+const magInclination = ref<number | null>(null);
+const magFieldStrength = ref<number | null>(null);
 const showMagSection = ref(false);
 const hasMagSensor = ref(false);
 const magNeedsCalibration = ref(false);
@@ -1126,14 +1343,32 @@ function dismissDeclinationNote() {
     declinationNote.value = "";
 }
 
+interface Coordinates {
+    lat: number;
+    lon: number;
+}
+
 /**
- * Acquire GPS coordinates from flight controller or IP geolocation.
- * @param {boolean} promptConsent - If true, prompt user for IP geolocation consent when no GPS fix.
+ * Acquire GPS coordinates from flight controller, browser geolocation, or IP geolocation.
+ * @param {boolean} promptConsent - If true, prompt user for location consent when no GPS fix exists.
  * @returns {Promise<{lat: number, lon: number}|null>}
  */
-async function acquireCoordinates(promptConsent) {
+async function acquireCoordinates(promptConsent: boolean): Promise<Coordinates | null> {
+    const gps = await gpsCoordinates();
+    if (gps) {
+        return gps;
+    }
+    const browser = await browserCoordinates(promptConsent);
+    if (browser) {
+        return browser;
+    }
+    return ipCoordinates(promptConsent);
+}
+
+// A live GPS fix from the flight controller, or null if there's no fix.
+async function gpsCoordinates(): Promise<Coordinates | null> {
     try {
-        await MSP.promise(MSPCodes.MSP_RAW_GPS);
+        await loadGpsData();
         if (fcStore.gpsData?.fix) {
             return {
                 lat: fcStore.gpsData.latitude / GPS_COORD_SCALE,
@@ -1143,40 +1378,65 @@ async function acquireCoordinates(promptConsent) {
     } catch {
         // GPS not available
     }
-
-    const hasConsent = !!getConfig(IP_GEOLOCATION_CONSENT_KEY)[IP_GEOLOCATION_CONSENT_KEY];
-    if (!hasConsent) {
-        if (!promptConsent) {
-            return null;
-        }
-        const allowed = confirm(i18n.getMessage("preflightIpConsentMessage"));
-        if (!allowed) {
-            return null;
-        }
-        setConfig({ [IP_GEOLOCATION_CONSENT_KEY]: true });
-    }
-
-    try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), IP_GEOLOCATION_TIMEOUT_MS);
-        const response = await fetch(IP_GEOLOCATION_URL, { signal: controller.signal });
-        clearTimeout(timer);
-        if (!response.ok) {
-            return null;
-        }
-        const data = await response.json();
-        const lat = Number.parseFloat(data.latitude);
-        const lon = Number.parseFloat(data.longitude);
-        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-            return null;
-        }
-        return { lat, lon };
-    } catch {
-        return null;
-    }
+    return null;
 }
 
-function applyDetectedDeclination(detected) {
+/**
+ * Browser native geolocation (HTML5 Geolocation API).
+ *
+ * @param {boolean} [promptConsent=false] - When false, resolves null unless permission was
+ *   already granted, so background refreshes never raise a permission prompt. Pass true only
+ *   for user-initiated actions ("Finish calibration", "Detect").
+ * @returns {Promise<{lat: number, lon: number}|null>} null on denial, timeout, or when the
+ *   API is unavailable.
+ */
+async function browserCoordinates(promptConsent = false): Promise<Coordinates | null> {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+        return null;
+    }
+    if (!promptConsent) {
+        if (navigator.permissions?.query) {
+            try {
+                const status = await navigator.permissions.query({ name: "geolocation" });
+                if (status.state !== "granted") {
+                    return null;
+                }
+            } catch {
+                return null;
+            }
+        } else {
+            return null;
+        }
+    }
+    return new Promise<Coordinates | null>((resolve) => {
+        // The spec's `timeout` option bounds position acquisition only — time spent
+        // waiting for the user to answer the permission prompt is excluded. A stalled
+        // prompt would leave both callbacks unfired, so guard with our own deadline to
+        // guarantee this settles and the caller never hangs mid-calibration.
+        let settled = false;
+        const settle = (value: Coordinates | null) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            clearTimeout(deadline);
+            resolve(value);
+        };
+        const deadline = setTimeout(() => settle(null), BROWSER_GEOLOCATION_TIMEOUT_MS);
+
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                const lat = pos.coords.latitude;
+                const lon = pos.coords.longitude;
+                settle(Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null);
+            },
+            () => settle(null),
+            { timeout: 5000, maximumAge: 300000 },
+        );
+    });
+}
+
+function applyDetectedDeclination(detected: number) {
     if (magDeclination.value === 0 && detected !== 0) {
         magDeclination.value = detected;
         declinationNote.value = i18n.getMessage("sensorConfigDeclinationAutoSet", { value: detected });
@@ -1186,6 +1446,17 @@ function applyDetectedDeclination(detected) {
             detected,
         });
     }
+}
+
+function setDeclinationFrom(result: GeoReference | null) {
+    if (!result) {
+        return;
+    }
+    magDeclination.value = roundOneDp(result.declination);
+    magInclination.value = roundOneDp(result.inclination);
+    magFieldStrength.value = result.fieldStrength;
+    declinationWarning.value = "";
+    gui_log(i18n.getMessage("configurationMagDeclinationSet", { declination: magDeclination.value }));
 }
 
 async function tryAutoGeoReference() {
@@ -1203,6 +1474,67 @@ async function tryAutoGeoReference() {
     applyDetectedDeclination(roundOneDp(result.declination));
 }
 
+// Resolve the best geomagnetic reference (cached, else GPS, else browser, else IP) and reflect its
+// inclination + field strength in the reactive panel state. The magSphere field-
+// direction arrow binds to magInclination, so the arrow appears for every source,
+// consistently and live. Returns the reference or null.
+async function resolveGeoReference(promptConsent: boolean) {
+    // Prefer a live GPS fix from the flight controller; otherwise reuse cached reference if available;
+    // fall back to browser geolocation, then IP geolocation, then manual fallback.
+    const gps = await gpsCoordinates();
+    let geo = gps ? computeDeclination(gps.lat, gps.lon) : getGeoReference();
+    if (!geo) {
+        const browser = await browserCoordinates(promptConsent);
+        if (browser) {
+            geo = computeDeclination(browser.lat, browser.lon);
+        }
+    }
+    if (!geo) {
+        const ip = await ipCoordinates(promptConsent);
+        if (ip) {
+            geo = computeDeclination(ip.lat, ip.lon);
+        }
+    }
+    if (geo) {
+        magInclination.value = roundOneDp(geo.inclination);
+        magFieldStrength.value = geo.fieldStrength;
+    }
+    return geo;
+}
+
+const manualLocationModalOpen = ref(false);
+const manualCoordsInput = ref("");
+const manualCoordsError = ref("");
+const manualLocationAction = ref("fullCal"); // "fullCal" | "declination"
+
+function openManualLocationModal(action = "fullCal") {
+    manualLocationAction.value = action;
+    manualCoordsInput.value = "";
+    manualCoordsError.value = "";
+    manualLocationModalOpen.value = true;
+}
+
+async function submitManualLocation() {
+    const coords = parseCoordinates(manualCoordsInput.value);
+    if (!coords) {
+        manualCoordsError.value = i18n.getMessage("magCalibrationManualLocationInvalid");
+        return;
+    }
+    const result = computeDeclination(coords.lat, coords.lon);
+    if (!result) {
+        manualCoordsError.value = i18n.getMessage("magCalibrationManualLocationFailed");
+        return;
+    }
+    manualCoordsError.value = "";
+    manualLocationModalOpen.value = false;
+
+    if (manualLocationAction.value === "fullCal") {
+        await acceptFullCal(result);
+    } else {
+        setDeclinationFrom(result);
+    }
+}
+
 async function autoSetDeclination() {
     if (isFetchingDeclination.value) {
         return;
@@ -1211,20 +1543,16 @@ async function autoSetDeclination() {
     try {
         const coords = await acquireCoordinates(true);
         if (!coords) {
-            gui_log(i18n.getMessage("configurationMagDeclinationNoGps"));
+            openManualLocationModal("declination");
             return;
         }
 
         const result = computeDeclination(coords.lat, coords.lon);
         if (!result) {
-            gui_log(i18n.getMessage("configurationMagDeclinationNoGps"));
+            openManualLocationModal("declination");
             return;
         }
-        magDeclination.value = roundOneDp(result.declination);
-        magInclination.value = roundOneDp(result.inclination);
-        magFieldStrength.value = result.fieldStrength;
-        declinationWarning.value = "";
-        gui_log(i18n.getMessage("configurationMagDeclinationSet", { declination: magDeclination.value }));
+        setDeclinationFrom(result);
     } finally {
         isFetchingDeclination.value = false;
     }
@@ -1233,24 +1561,66 @@ async function autoSetDeclination() {
 // --- Inline Mag Calibration (replaces dialog) ---
 
 const cal = reactive(useMagCalibration());
-const calCurrentStep = ref(0);
-const calUnguidedMode = ref(false);
-const calAutoStep = ref(false);
-const calStepCountdown = ref(0);
-let calAutoStepTimer = null;
-const calGeoRef = ref(null);
+const calIsFull = ref(false);
+const fullCalResult = ref<TumbleCharacterization | null>(null);
+// Why the last "Finish calibration" was refused. Shown in the panel: the log alone left the
+// button looking dead.
+const fullCalError = ref("");
 
-const CAL_AUTO_STEP_SECONDS = 10;
-const CAL_TOTAL_STEPS = 6;
-
-const CAL_ORIENTATION_STEPS = [
-    { i18n: "magCalibrationStep1" },
-    { i18n: "magCalibrationStep2" },
-    { i18n: "magCalibrationStep3" },
-    { i18n: "magCalibrationStep4" },
-    { i18n: "magCalibrationStep5" },
-    { i18n: "magCalibrationStep6" },
+// Guided choreography for the full tumble — each step is one full rotation about a
+// different axis, which together light up all 20 coverage zones.
+const CAL_FULL_STEPS = [
+    "magCalibrationFullStep1",
+    "magCalibrationFullStep2",
+    "magCalibrationFullStep3",
+    "magCalibrationFullStep4",
+    "magCalibrationFullStep5",
+    "magCalibrationFullStep6",
+    "magCalibrationFullStep7",
+    "magCalibrationFullStep8",
 ];
+const FULL_STEP_DURATION_MS = 9000;
+const FULL_READY_FRACTION = 0.8; // 16 of 20 zones before "Compute" is allowed
+const fullCalStep = ref(0);
+let fullStepTimer: ReturnType<typeof setInterval> | null = null;
+
+// "Compute" is enabled only once enough zones are covered — clicking earlier would
+// just be refused by the planar/coverage gate, so the button stays disabled until then.
+const FULL_MIN_SAMPLES = 40;
+const fullReady = computed(
+    () => cal.sampleCount >= FULL_MIN_SAMPLES && (cal.coverage?.fraction ?? 0) >= FULL_READY_FRACTION,
+);
+
+const finishButtonColor = computed(() => {
+    if (!fullReady.value) {
+        return "neutral";
+    }
+    if ((cal.coverage?.covered ?? 0) >= (cal.coverage?.totalFaces ?? 20)) {
+        return "primary";
+    }
+    return "warning";
+});
+
+function startFullStepTimer() {
+    clearFullStepTimer();
+    fullCalStep.value = 0;
+    fullStepTimer = setInterval(() => {
+        if (fullCalStep.value < CAL_FULL_STEPS.length - 1) {
+            fullCalStep.value++;
+        } else {
+            clearFullStepTimer();
+        }
+    }, FULL_STEP_DURATION_MS);
+}
+
+function clearFullStepTimer() {
+    if (fullStepTimer !== null) {
+        clearInterval(fullStepTimer);
+        fullStepTimer = null;
+    }
+}
+const calGeoRef = ref<GeoReference | null>(null);
+let lastCalStarter: (() => Promise<void>) | null = null;
 
 const CAL_QUALITY_KEY = {
     good: "magCalibrationQualityGood",
@@ -1258,23 +1628,20 @@ const CAL_QUALITY_KEY = {
     poor: "magCalibrationQualityPoor",
 };
 
+const STATUS_CLASS_MAP: Record<string, string | undefined> = {
+    high: "status-ok",
+    good: "status-ok",
+    medium: "status-warn",
+    fair: "status-warn",
+    low: "status-bad",
+    poor: "status-bad",
+};
+
+function statusClass(level: string) {
+    return STATUS_CLASS_MAP[level] || "";
+}
+
 const calIsCalibrating = computed(() => cal.phase === "waiting" || cal.phase === "collecting");
-
-const calOffsetsText = computed(() => {
-    const fit = cal.sphereFitResult;
-    if (!fit) {
-        return "\u2014";
-    }
-    return `${fit.center.x.toFixed(0)}, ${fit.center.y.toFixed(0)}, ${fit.center.z.toFixed(0)}`;
-});
-
-const calResidualText = computed(() => {
-    const fit = cal.sphereFitResult;
-    if (!fit) {
-        return "\u2014";
-    }
-    return fit.residual.toFixed(1);
-});
 
 const calFirmwareOffsetsText = computed(() => {
     const fw = cal.firmwareOffsets;
@@ -1284,106 +1651,319 @@ const calFirmwareOffsetsText = computed(() => {
     return `${fw.x}, ${fw.y}, ${fw.z}`;
 });
 
-function startMagCal(quick = false, auto = false) {
-    calUnguidedMode.value = quick;
-    calAutoStep.value = !quick && auto;
-    calCurrentStep.value = 0;
-    calGeoRef.value = getGeoReference();
-    cal.startCalibration();
-}
+// Legacy (API < 1.47) Calibrate button: show the 30 s firmware countdown on the button itself,
+// since this path has no inline calibration panel (#5652).
+const legacyCalButtonLabel = computed(() => {
+    if (cal.phase === "collecting" && cal.firmwareSecondsRemaining >= 0) {
+        return i18n.getMessage("magCalibrationLegacyCountdown", { seconds: cal.firmwareSecondsRemaining });
+    }
+    // cal.starting covers the CLI offset read before the firmware calibration is triggered.
+    if (calIsCalibrating.value || cal.starting) {
+        return i18n.getMessage("magCalibrationLegacyStarting");
+    }
+    return i18n.getMessage("sensorConfigCalibrate");
+});
 
-function nextMagCalStep() {
-    if (calCurrentStep.value < CAL_TOTAL_STEPS - 1) {
-        calCurrentStep.value++;
-        if (calAutoStep.value) {
-            startCalAutoStepTimer();
-        }
+async function startLegacyFirmwareCal() {
+    lastCalStarter = startLegacyFirmwareCal;
+    calGeoRef.value = getGeoReference();
+    await cal.startCalibration("quick");
+    if (calIsCalibrating.value) {
+        gui_log(i18n.getMessage("initialSetupMagCalibStarted"));
     }
 }
 
-function finishMagCal() {
-    clearCalAutoStepTimer();
-    cal.completeCalibration();
-    magNeedsCalibration.value = false;
-    playCalCompletionBeep();
-}
-
 function cancelMagCal() {
-    clearCalAutoStepTimer();
+    clearFullStepTimer();
+    calIsFull.value = false;
+    fullCalResult.value = null;
+    fullCalError.value = "";
     cal.cancelCalibration();
-    calCurrentStep.value = 0;
 }
 
-const MAG_VIZ_MODES = [
+const MAG_VIZ_MODES: { value: MagVizMode; label: string; icon: string }[] = [
     { value: "pointcloud", label: "magVizPointCloud", icon: "i-lucide-scatter-chart" },
     { value: "heatmap", label: "magVizHeatmap", icon: "i-lucide-globe" },
     { value: "projection", label: "magVizProjection", icon: "i-lucide-circle-dot" },
     { value: "polar", label: "magVizPolar", icon: "i-lucide-radar" },
 ];
-const magVizMode = ref("pointcloud");
+const magVizMode = ref<MagVizMode>("pointcloud");
 
-const calModeItems = computed(() => [
-    [
-        {
-            label: i18n.getMessage("magCalibrationUnguided"),
-            description: i18n.getMessage("magCalibrationUnguidedDesc"),
-            icon: "i-lucide-shuffle",
-            onSelect: () => startMagCal(true),
+const calGuidedAvailable = computed(() => isApi147.value && isMspCliSupported());
+
+const calModeItems = computed(() => {
+    return [
+        [
+            {
+                label: i18n.getMessage("magCalibrationUnguided"),
+                description: i18n.getMessage("magCalibrationUnguidedDesc"),
+                icon: "i-lucide-shuffle",
+                onSelect: () => startLegacyFirmwareCal(),
+            },
+        ],
+    ];
+});
+
+async function startCheckMode() {
+    lastCalStarter = startCheckMode;
+    calGeoRef.value = getGeoReference();
+    await cal.startCalibration("check");
+}
+
+async function startFullCal() {
+    if (!calGuidedAvailable.value) {
+        return;
+    }
+    lastCalStarter = startFullCal;
+    calIsFull.value = true;
+    fullCalResult.value = null;
+    fullCalError.value = "";
+
+    // The dip-angle alignment solve needs the WMM inclination. Resolve it up front
+    // (best effort, no consent prompt) and reflect it in the panel + field arrow.
+    calGeoRef.value = await resolveGeoReference(false);
+
+    await cal.startCalibration("full");
+    startFullStepTimer();
+}
+
+const isAcceptingCal = ref(false);
+
+async function acceptFullCal(manualGeoRef: GeoReference | null = null) {
+    isAcceptingCal.value = true;
+    try {
+        const samples = cal.samples;
+        if (samples.length < FULL_MIN_SAMPLES) {
+            gui_log(i18n.getMessage("magCalibrationFullInsufficientSamples"));
+            return;
+        }
+
+        // Reference resolved by the manual modal, else live GPS, else browser, else IP.
+        const geoRef = manualGeoRef ?? (await resolveGeoReference(true));
+
+        if (!geoRef) {
+            gui_log(i18n.getMessage("magCalibrationFullNoGeo"));
+            openManualLocationModal("fullCal");
+            return;
+        }
+        calGeoRef.value = geoRef;
+
+        const align_mag = fcStore.sensorAlignment.align_mag || 0;
+        const customAngles =
+            align_mag === 9
+                ? {
+                      roll: fcStore.sensorAlignment.mag_align_roll || 0,
+                      pitch: fcStore.sensorAlignment.mag_align_pitch || 0,
+                      yaw: fcStore.sensorAlignment.mag_align_yaw || 0,
+                  }
+                : null;
+        const R_cur = currentMatrixOf(align_mag, customAngles);
+        if (!R_cur) {
+            // Unreachable: customAngles is set whenever align_mag is CUSTOM, the one case that yields null.
+            gui_log(i18n.getMessage("magCalibrationError"));
+            return;
+        }
+
+        const result = characterizeTumble({
+            samples,
+            currentMatrix: R_cur,
+            inclinationRad: degToRad(geoRef.inclination),
+        });
+
+        if (!result.ok) {
+            fullCalError.value = result.error || i18n.getMessage("magCalibrationError");
+            gui_log(fullCalError.value);
+            return;
+        }
+        fullCalError.value = "";
+
+        // Only now: an early return above leaves the user still collecting, and the step
+        // guidance has to keep advancing behind the manual-location modal.
+        clearFullStepTimer();
+        fullCalResult.value = result;
+        cal.completeCalibration();
+    } finally {
+        isAcceptingCal.value = false;
+    }
+}
+
+const isSavingCal = ref(false);
+
+async function saveCalValues({ x, y, z }: Vec3) {
+    isSavingCal.value = true;
+    try {
+        const result = await cal.writeCalValues(x, y, z);
+        if (result?.ok) {
+            gui_log(i18n.getMessage("magCalibrationSaveSuccess"));
+            magNeedsCalibration.value = x === 0 && y === 0 && z === 0;
+        } else {
+            gui_log(i18n.getMessage("magCalibrationSaveError"));
+        }
+    } finally {
+        isSavingCal.value = false;
+    }
+}
+
+function buildFullCalCliLines() {
+    const r = fullCalResult.value;
+    if (!r) {
+        return [];
+    }
+    const lines: string[] = [];
+
+    if (r.preset === 9) {
+        if (!isFirmwareCustomMagAlignCapable(fcStore.config?.flightControllerVersion)) {
+            lines.push(
+                `# WARNING: firmware ${fcStore.config?.flightControllerVersion || "?"} predates betaflight#14849 (${MIN_FC_VERSION_FOR_CUSTOM_MAG_ALIGN}+): it would apply the INVERSE of these angles. Update the firmware before using CUSTOM alignment.`,
+            );
+        }
+        lines.push(
+            "set align_mag = CUSTOM",
+            `set mag_align_roll = ${Math.round(r.euler_zyx_deg.roll * 10)}`,
+            `set mag_align_pitch = ${Math.round(r.euler_zyx_deg.pitch * 10)}`,
+            `set mag_align_yaw = ${Math.round(r.euler_zyx_deg.yaw * 10)}`,
+        );
+    } else if (r.preset >= 1 && r.preset <= 8) {
+        const names = ["", "CW0", "CW90", "CW180", "CW270", "CW0FLIP", "CW90FLIP", "CW180FLIP", "CW270FLIP"];
+        lines.push(`set align_mag = ${names[r.preset]}`);
+    }
+
+    lines.push(`set mag_calibration = ${r.offsets.x},${r.offsets.y},${r.offsets.z}`);
+
+    const geoRef = calGeoRef.value || getGeoReference();
+    if (geoRef) {
+        lines.push(`set mag_declination = ${Math.round(geoRef.declination * 10)}`);
+    }
+
+    lines.push("save");
+    return lines;
+}
+
+function copyFullCalCli() {
+    const lines = buildFullCalCliLines();
+    if (!lines.length) {
+        return;
+    }
+    navigator.clipboard
+        .writeText(lines.join("\n"))
+        .then(() => gui_log(i18n.getMessage("magCalibrationFullCliCopied")))
+        .catch(() => gui_log(i18n.getMessage("magCalibrationFullCliCopyFailed")));
+}
+
+async function applyFullCal() {
+    const r = fullCalResult.value;
+    if (!r) {
+        return;
+    }
+    if (r.preset === 9 && !isFirmwareCustomMagAlignCapable(fcStore.config?.flightControllerVersion)) {
+        gui_log(
+            i18n.getMessage("magCalibrationFullCustomUnsupported", {
+                version: fcStore.config?.flightControllerVersion || "?",
+                min: MIN_FC_VERSION_FOR_CUSTOM_MAG_ALIGN,
+            }),
+        );
+        return;
+    }
+    isSavingCal.value = true;
+    try {
+        // Reflect the proposed alignment into the form. This makes it visible in the
+        // alignment dropdown and persists it through the standard sensor-config save
+        // (MSP_SET_SENSOR_ALIGNMENT + EEPROM), which is the proven path — not raw CLI.
+        sensorAlignment.align_mag = r.preset;
+        if (r.preset === 9 && r.euler_zyx_deg) {
+            sensorAlignment.mag_align_roll = roundOneDp(r.euler_zyx_deg.roll);
+            sensorAlignment.mag_align_pitch = roundOneDp(r.euler_zyx_deg.pitch);
+            sensorAlignment.mag_align_yaw = roundOneDp(r.euler_zyx_deg.yaw);
+        }
+        const geoRef = calGeoRef.value || getGeoReference();
+        if (geoRef) {
+            magDeclination.value = roundOneDp(geoRef.declination);
+        }
+
+        // Write the new hard-iron offsets via the same path the offset editor uses.
+        const offsetResult = await cal.writeCalValues(r.offsets.x, r.offsets.y, r.offsets.z);
+        if (!offsetResult?.ok) {
+            gui_log(i18n.getMessage("magCalibrationSaveError"));
+            return;
+        }
+        magNeedsCalibration.value = false;
+
+        // Persist alignment + declination to EEPROM and reboot (standard save flow).
+        await saveConfig();
+        gui_log(i18n.getMessage("magCalibrationFullApplied"));
+    } catch (e) {
+        gui_log(i18n.getMessage("magCalibrationSaveError"));
+        console.error(e);
+    } finally {
+        isSavingCal.value = false;
+    }
+}
+
+function exportFullCalModel() {
+    const r = fullCalResult.value;
+    if (!r) {
+        return;
+    }
+    const geoRef = calGeoRef.value || getGeoReference();
+    const align_mag = fcStore.sensorAlignment.align_mag || 0;
+    const customAngles =
+        align_mag === 9
+            ? {
+                  roll: fcStore.sensorAlignment.mag_align_roll || 0,
+                  pitch: fcStore.sensorAlignment.mag_align_pitch || 0,
+                  yaw: fcStore.sensorAlignment.mag_align_yaw || 0,
+              }
+            : null;
+
+    const model = buildCharacterizationModel({
+        solverResult: {
+            preset: r.preset,
+            label: r.label,
+            euler_zyx_deg: r.euler_zyx_deg,
+            quality: r.quality,
         },
-        {
-            label: i18n.getMessage("magCalibrationStart"),
-            description: i18n.getMessage("magCalibrationStartDesc"),
-            icon: "i-lucide-compass",
-            onSelect: () => startMagCal(false),
+        capturedUnder: {
+            alignment: align_mag,
+            custom_angles: align_mag === 9 && customAngles ? { ...customAngles } : null,
+            mag_zero: cal.firmwareOffsets ? { ...cal.firmwareOffsets } : null,
+            mag_zero_known: cal.firmwareOffsets !== null,
         },
-        {
-            label: i18n.getMessage("magCalibrationStartAuto"),
-            description: i18n.getMessage("magCalibrationStartAutoDesc"),
-            icon: "i-lucide-timer",
-            onSelect: () => startMagCal(false, true),
-        },
-    ],
-]);
+        ellipsoidParams: r.ellipsoid,
+        calibrationOffsets: r.offsets,
+        geoReference: geoRef,
+        gpsFix: !!fcStore.gpsData.fix,
+        gpsLat: fcStore.gpsData.latitude,
+        gpsLon: fcStore.gpsData.longitude,
+    });
+
+    const blob = new Blob([JSON.stringify(model, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `characterization_model_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
 
 function retryAndStartMagCal() {
+    const starter = lastCalStarter ?? startFullCal;
     retryMagCal();
-    startMagCal(false);
+    starter();
+}
+
+function clearMagCalSamples() {
+    fullCalError.value = "";
+    cal.clearSamples();
 }
 
 function retryMagCal() {
-    clearCalAutoStepTimer();
+    clearFullStepTimer();
+    calIsFull.value = false;
+    fullCalResult.value = null;
+    fullCalError.value = "";
     cal.retry();
-    calCurrentStep.value = 0;
-    calUnguidedMode.value = false;
-    calAutoStep.value = false;
-}
-
-function startCalAutoStepTimer() {
-    clearCalAutoStepTimer();
-    calStepCountdown.value = CAL_AUTO_STEP_SECONDS;
-    calAutoStepTimer = setInterval(() => {
-        if (cal.phase === "error" || cal.phase === "complete") {
-            clearCalAutoStepTimer();
-            return;
-        }
-        calStepCountdown.value--;
-        if (calStepCountdown.value <= 0) {
-            clearCalAutoStepTimer();
-            if (calCurrentStep.value < CAL_TOTAL_STEPS - 1) {
-                nextMagCalStep();
-            } else {
-                finishMagCal();
-            }
-        }
-    }, 1000);
-}
-
-function clearCalAutoStepTimer() {
-    if (calAutoStepTimer !== null) {
-        clearInterval(calAutoStepTimer);
-        calAutoStepTimer = null;
-    }
-    calStepCountdown.value = 0;
 }
 
 const BEEP_NOTES = [
@@ -1412,26 +1992,15 @@ function playCalCompletionBeep() {
     }
 }
 
-// Auto-complete unguided calibration when firmware signals done
+// Auto-complete firmware calibration when firmware signals done
 watch(
     () => cal.firmwareDone,
     (done) => {
-        if (done && calUnguidedMode.value) {
+        if (done && cal.mode === "quick") {
             cal.completeCalibration();
             magNeedsCalibration.value = false;
+            gui_log(i18n.getMessage("initialSetupMagCalibEnded"));
             playCalCompletionBeep();
-        }
-    },
-);
-
-// Manage auto-step timer based on calibration phase transitions
-watch(
-    () => cal.phase,
-    (phase) => {
-        if (phase === "collecting" && calAutoStep.value) {
-            startCalAutoStepTimer();
-        } else if (phase === "error" || phase === "complete") {
-            clearCalAutoStepTimer();
         }
     },
 );
@@ -1450,13 +2019,26 @@ const accNeedsCalibration = computed(() => {
 const calibratingAccel = ref(false);
 const { addTimeout } = useTimeout();
 
+// React to the firmware clearing the flag after calibration completes
+watch(accNeedsCalibration, (needsCal, wasNeeded) => {
+    if (wasNeeded && !needsCal && calibratingAccel.value) {
+        resumeInterval("sensors_attitude");
+        gui_log(i18n.getMessage("initialSetupAccelCalibEnded"));
+        calibratingAccel.value = false;
+    }
+});
+
 function onCalibrateAccel() {
     if (calibratingAccel.value) {
         return;
     }
     calibratingAccel.value = true;
 
-    MSP.send_message(MSPCodes.MSP_ACC_CALIBRATION, false, false, function () {
+    // The MCU is locked in a busy loop during calibration and cannot process
+    // serial commands; pause the attitude poll to avoid flooding the buffer.
+    pauseInterval("sensors_attitude");
+
+    startAccCalibration(function () {
         if (!isMounted.value) {
             return;
         }
@@ -1469,8 +2051,16 @@ function onCalibrateAccel() {
             if (!isMounted.value) {
                 return;
             }
-            gui_log(i18n.getMessage("initialSetupAccelCalibEnded"));
-            calibratingAccel.value = false;
+            resumeInterval("sensors_attitude");
+            // Re-fetch board info to refresh configurationProblems; the watcher above
+            // handles cleanup when the flag clears. The callback acts as a fallback for
+            // firmware that does not report configurationProblems.
+            loadBoardInfo(function () {
+                if (calibratingAccel.value) {
+                    gui_log(i18n.getMessage("initialSetupAccelCalibEnded"));
+                    calibratingAccel.value = false;
+                }
+            });
         },
         ACC_CALIBRATION_TIMEOUT_MS,
     );
@@ -1482,23 +2072,22 @@ const showLiveSensors = ref(false);
 
 // --- 3D Model Preview ---
 
-const modelWrapper = ref(null);
-const modelCanvas = ref(null);
-const instrumentAttitude = ref(null);
-const instrumentHeading = ref(null);
-const instrumentAltimeter = ref(null);
-let modelInstance = null;
-let boundModelResize = null;
-let attitudeIndicator = null;
-let headingIndicator = null;
-let altimeterIndicator = null;
+const modelWrapper = ref<HTMLElement | null>(null);
+const modelCanvas = ref<HTMLCanvasElement | null>(null);
+const instrumentAttitude = ref<HTMLElement | null>(null);
+const instrumentHeading = ref<HTMLElement | null>(null);
+const instrumentAltimeter = ref<HTMLElement | null>(null);
+type FlightIndicator = ReturnType<typeof flightIndicator>;
+let modelInstance: Model | null = null;
+let boundModelResize: (() => void) | null = null;
+let attitudeIndicator: FlightIndicator | null = null;
+let headingIndicator: FlightIndicator | null = null;
+let altimeterIndicator: FlightIndicator | null = null;
 
-const { addInterval, removeAllIntervals } = useInterval();
-
-const DEG_TO_RAD = Math.PI / 180;
+const { addInterval, pauseInterval, resumeInterval, removeAllIntervals } = useInterval();
 
 const CARDINAL_DIRS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
-function toCardinal(deg) {
+function toCardinal(deg: number) {
     return CARDINAL_DIRS[Math.round((((deg % 360) + 360) % 360) / 45) % 8];
 }
 
@@ -1510,12 +2099,13 @@ const attitudeDisplay = reactive({
     roll: "0.0",
 });
 const attitudeRaw = reactive({ roll: 0, pitch: 0, heading: 0 });
+const attitudeQuaternion = ref<Quaternion | null>(null);
 
 function resetYaw() {
     yawFix.value = fcStore.sensorData.kinematics[2] * -1;
 }
 
-function formatAttitude(val) {
+function formatAttitude(val: number) {
     return val.toFixed(1);
 }
 
@@ -1546,14 +2136,14 @@ function renderModel() {
         return;
     }
     const k = fcStore.sensorData.kinematics;
-    const x = k[1] * -DEG_TO_RAD;
-    const y = (k[2] * -1 - yawFix.value) * DEG_TO_RAD;
-    const z = k[0] * -DEG_TO_RAD;
+    const x = -degToRad(k[1]);
+    const y = degToRad(k[2] * -1 - yawFix.value);
+    const z = -degToRad(k[0]);
     modelInstance.rotateTo(x, y, z);
 }
 
 function pollAttitude() {
-    MSP.send_message(MSPCodes.MSP_ATTITUDE, false, false, function () {
+    requestAttitude(function () {
         if (!isMounted.value) {
             return;
         }
@@ -1576,13 +2166,21 @@ function pollAttitude() {
         if (headingIndicator) {
             headingIndicator.setHeading(headingDeg);
         }
-        if (altimeterIndicator) {
-            MSP.send_message(MSPCodes.MSP_ALTITUDE, false, false, () => {
-                altimeterIndicator.setAltitude(fcStore.sensorData.altitude * 100);
+        const altimeter = altimeterIndicator;
+        if (altimeter) {
+            requestAltitude(() => {
+                altimeter.setAltitude(fcStore.sensorData.altitude * 100);
             });
         }
         renderModel();
     });
+
+    // Poll quaternion alongside Euler for gimbal-lock-free sphere view rotation
+    if (isApi148.value) {
+        requestAttitudeQuaternion(function () {
+            attitudeQuaternion.value = fcStore.sensorData.quaternion;
+        });
+    }
 }
 
 function disposeModel() {
@@ -1599,8 +2197,6 @@ function disposeModel() {
 }
 
 // --- Dirty Tracking ---
-
-const baseline = ref("");
 
 const snapshotSensorAlignment = () => ({
     gyro_to_use: sensorAlignment.gyro_to_use,
@@ -1623,6 +2219,7 @@ const snapshotSensorAlignment = () => ({
     mag_align_yaw: sensorAlignment.mag_align_yaw,
 });
 
+/** @returns {string} serialized tab state for dirty comparison */
 const serializeState = () =>
     JSON.stringify({
         sensorConfig: { ...sensorConfig },
@@ -1630,14 +2227,17 @@ const serializeState = () =>
         accelTrims: { ...accelTrims },
         sensorAlignment: snapshotSensorAlignment(),
         magDeclination: magDeclination.value,
+        canDevice: canDevice.value,
+        rangefinderPort: rangefinderPortIdentifier.value,
+        opticalFlowPort: opticalFlowPortIdentifier.value,
     });
 
-const dirty = computed(() => {
-    if (!baseline.value) {
-        return false;
-    }
-    return baseline.value !== serializeState();
-});
+const { dirty, markClean, takeSnapshot } = useDirtyState(serializeState);
+
+// A DroneCAN compass or airspeed sensor can already be stored on a board whose stack is off.
+// Nothing is dirty then, so Save would be disabled and the GUI could never turn the stack on.
+const dronecanNeedsEnable = computed(() => dronecanSelected.value && !dronecanEnabled.value);
+const canSave = computed(() => dirty.value || dronecanNeedsEnable.value);
 
 // --- Load helpers ---
 
@@ -1645,8 +2245,12 @@ function hydrateSensorConfig() {
     sensorConfig.acc_hardware = fcStore.sensorConfig.acc_hardware;
     sensorConfig.baro_hardware = fcStore.sensorConfig.baro_hardware;
     sensorConfig.mag_hardware = fcStore.sensorConfig.mag_hardware;
+    if (sensorConfig.mag_hardware !== MAG_HARDWARE_NONE) {
+        lastMagHardware = sensorConfig.mag_hardware;
+    }
     sensorConfig.sonar_hardware = fcStore.sensorConfig.sonar_hardware;
     sensorConfig.opticalflow_hardware = fcStore.sensorConfig.opticalflow_hardware;
+    sensorConfig.pitot_hardware = fcStore.sensorConfig.pitot_hardware;
 
     boardAlignment.roll = fcStore.boardAlignment.roll;
     boardAlignment.pitch = fcStore.boardAlignment.pitch;
@@ -1692,6 +2296,12 @@ function hydrateAlignment() {
         showGyro2Align.value = hasSecondGyro.value;
         showMultiGyro.value = false;
     }
+
+    if (isApi149.value) {
+        showPitot.value = true;
+    } else {
+        showPitot.value = false;
+    }
 }
 
 function setupMagSection() {
@@ -1703,22 +2313,13 @@ function setupMagSection() {
     }
 
     showMagSection.value = true;
-    showMagAlign.value = isApi147.value;
+    showMagAlign.value = true;
 
     if (isApi146.value) {
         magDeclination.value = fcStore.compassConfig.mag_declination;
-
-        const cached = getGeoReference();
-        if (cached) {
-            magInclination.value = roundOneDp(cached.inclination);
-            magFieldStrength.value = cached.fieldStrength;
-            applyDetectedDeclination(roundOneDp(cached.declination));
-        } else {
-            tryAutoGeoReference().catch(() => {});
-        }
     }
 
-    cal.readFirmwareOffsets()
+    cal.refreshFirmwareOffsets()
         .then((offsets) => {
             if (offsets && offsets.x === 0 && offsets.y === 0 && offsets.z === 0) {
                 magNeedsCalibration.value = true;
@@ -1727,83 +2328,107 @@ function setupMagSection() {
         .catch(() => {});
 }
 
+// Runs *after* the baseline is captured: an auto-set declination is a proposal the user still
+// has to save. Inside setupMagSection() the cached path landed inside the baseline, greying out
+// Save on the very change the note asked for.
+function suggestGeoDeclination() {
+    if (!hasMagSensor.value || !isApi146.value) {
+        return;
+    }
+
+    const cached = getGeoReference();
+    if (cached) {
+        magInclination.value = roundOneDp(cached.inclination);
+        magFieldStrength.value = cached.fieldStrength;
+        applyDetectedDeclination(roundOneDp(cached.declination));
+    } else {
+        tryAutoGeoReference().catch(() => {});
+    }
+}
+
 function setupPeripherals() {
+    magTypesList.value = sensorTypesData.value?.mag?.elements || [];
+
     if (isApi147.value) {
         sonarTypesList.value = sensorTypesData.value?.sonar?.elements || [];
         showRangefinder.value = sonarTypesList.value.length > 0;
         opticalFlowTypesList.value = sensorTypesData.value?.opticalflow?.elements || [];
         showOpticalFlow.value = opticalFlowTypesList.value.length > 0;
     }
+    if (isApi149.value) {
+        pitotTypesList.value = sensorTypesData.value?.pitot?.elements || [];
+    }
 }
 
 // --- Load ---
 
 const loadConfig = async () => {
-    try {
-        if (!isMounted.value) {
-            return;
-        }
+    mixerMotorConfigReady.value = false;
+    await runTabLoad(
+        async () => {
+            if (!isMounted.value) {
+                return;
+            }
 
-        await MSP.promise(MSPCodes.MSP_SENSOR_CONFIG);
-        await MSP.promise(MSPCodes.MSP_SENSOR_ALIGNMENT);
-        await MSP.promise(MSPCodes.MSP_BOARD_ALIGNMENT_CONFIG);
-        await MSP.promise(MSPCodes.MSP_ACC_TRIM);
-        await MSP.promise(MSPCodes.MSP2_SENSOR_CONFIG_ACTIVE);
+            await loadSensorsConfig();
 
-        if (isApi146.value) {
-            await MSP.promise(MSPCodes.MSP_COMPASS_CONFIG);
-        }
+            if (!isMounted.value) {
+                return;
+            }
 
-        if (isApi147.value) {
-            await MSP.promise(MSPCodes.MSP2_GYRO_SENSOR);
-        }
+            try {
+                sensorTypesData.value = await sensorTypes();
+            } catch (error) {
+                sensorTypesData.value = null;
+                console.warn("Failed to load sensor types", error);
+            }
 
-        if (!isMounted.value) {
-            return;
-        }
+            await loadRangefinderPort();
+            await loadOpticalFlowPort();
+            await loadDronecan();
 
-        try {
-            sensorTypesData.value = await sensorTypes();
-        } catch (error) {
-            sensorTypesData.value = null;
-            console.warn("Failed to load sensor types", error);
-        }
+            hydrateSensorConfig();
+            hydrateAlignment();
+            resolveSensorNames();
+            setupMagSection();
+            setupPeripherals();
 
-        hydrateSensorConfig();
-        hydrateAlignment();
-        resolveSensorNames();
-        setupMagSection();
-        setupPeripherals();
+            // Enable the wizard only after alignment (and the rest) is hydrated into local state.
+            mixerMotorConfigReady.value = true;
 
-        baseline.value = serializeState();
+            markClean();
 
-        await nextTick();
+            suggestGeoDeclination();
 
-        if (!isMounted.value) {
-            return;
-        }
+            await nextTick();
 
-        // Initialize 3D model, instruments, and start attitude polling
-        initModel();
-        initInstruments();
-        addInterval("sensors_attitude", pollAttitude, ATTITUDE_POLL_MS, true);
+            if (!isMounted.value) {
+                return;
+            }
 
-        GUI.content_ready();
-    } catch (e) {
-        console.error("Failed to load sensor config", e);
-        GUI.content_ready();
-    }
+            // Initialize 3D model, instruments, and start attitude polling
+            initModel();
+            initInstruments();
+            addInterval("sensors_attitude", pollAttitude, ATTITUDE_POLL_MS, true);
+        },
+        (e) => {
+            console.error("Failed to load sensor config", e);
+        },
+    );
 };
 
 // --- Save ---
 
-const saveConfig = async () => {
-    if (isSaving.value) {
-        return;
-    }
-    isSaving.value = true;
+const saveConfig = () =>
+    runSave(async () => {
+        // Warn before a pick that would take a port from another feature; a cancel here leaves the
+        // save untouched, before anything has been written to the FC.
+        if (!(await confirmPortConflicts())) {
+            return;
+        }
 
-    try {
+        const savedSnapshot = takeSnapshot();
+
         // Push sensor hardware to store
         fcStore.sensorConfig.acc_hardware = sensorConfig.acc_hardware;
         fcStore.sensorConfig.baro_hardware = sensorConfig.baro_hardware;
@@ -1812,6 +2437,10 @@ const saveConfig = async () => {
         if (isApi147.value) {
             fcStore.sensorConfig.sonar_hardware = sensorConfig.sonar_hardware;
             fcStore.sensorConfig.opticalflow_hardware = sensorConfig.opticalflow_hardware;
+        }
+
+        if (isApi149.value) {
+            fcStore.sensorConfig.pitot_hardware = sensorConfig.pitot_hardware;
         }
 
         // Push board alignment to store
@@ -1855,38 +2484,26 @@ const saveConfig = async () => {
         }
 
         // Send MSP commands
-        await MSP.promise(MSPCodes.MSP_SET_SENSOR_CONFIG, mspHelper.crunch(MSPCodes.MSP_SET_SENSOR_CONFIG));
-        await MSP.promise(MSPCodes.MSP_SET_SENSOR_ALIGNMENT, mspHelper.crunch(MSPCodes.MSP_SET_SENSOR_ALIGNMENT));
-        await MSP.promise(
-            MSPCodes.MSP_SET_BOARD_ALIGNMENT_CONFIG,
-            mspHelper.crunch(MSPCodes.MSP_SET_BOARD_ALIGNMENT_CONFIG),
-        );
-        await MSP.promise(MSPCodes.MSP_SET_ACC_TRIM, mspHelper.crunch(MSPCodes.MSP_SET_ACC_TRIM));
+        await sendSensorsConfig();
 
-        if (isApi146.value) {
-            await MSP.promise(MSPCodes.MSP_SET_COMPASS_CONFIG, mspHelper.crunch(MSPCodes.MSP_SET_COMPASS_CONFIG));
+        // Between the parameter group writes and the persist that serialises them, so a
+        // refused port throws before anything reaches EEPROM.
+        await writeRangefinderPort();
+        await writeOpticalFlowPort();
+
+        try {
+            await writeDronecan({ enable: dronecanSelected.value });
+        } catch (error) {
+            throw withSaveFailureMessage(error, i18n.getMessage("dronecanSaveFailed"));
         }
 
         gui_log(i18n.getMessage("sensorConfigSaved"));
 
-        baseline.value = serializeState();
-
         // Save to EEPROM and reboot
-        await new Promise((resolve) => {
-            mspHelper.writeConfiguration(false, () => {
-                navigationStore.cleanup(() => {
-                    reboot();
-                    resolve();
-                });
-            });
-        });
-    } catch (e) {
-        console.error("Failed to save sensor config", e);
-        gui_log(i18n.getMessage("sensorConfigSaveFailed"));
-    } finally {
-        isSaving.value = false;
-    }
-};
+        await saveAndReboot();
+
+        markClean(savedSnapshot);
+    });
 
 // --- Lifecycle ---
 
@@ -1912,7 +2529,7 @@ onMounted(() => {
         gap: 1rem;
     }
 
-    .sensor-model-box :deep(> div:last-child) {
+    .sensor-model-box > div:last-child {
         height: 100%;
         min-height: 0;
     }
@@ -1938,7 +2555,7 @@ onMounted(() => {
         .instruments-right {
             position: absolute;
             bottom: 1rem;
-            right: 1rem;
+            inset-inline-end: 1rem;
             display: flex;
             flex-direction: row;
             gap: 0.5rem;
@@ -1949,7 +2566,7 @@ onMounted(() => {
     .attitude-overlay {
         position: absolute;
         top: 0.75rem;
-        left: 0.75rem;
+        inset-inline-start: 0.75rem;
         font-size: 0.8rem;
         color: var(--surface-950);
 
@@ -1968,36 +2585,11 @@ onMounted(() => {
     .yaw-reset-btn {
         position: absolute;
         top: 0.75rem;
-        right: 0.75rem;
+        inset-inline-end: 0.75rem;
     }
 
     .align-detect-inline {
         padding: 0.5rem 0;
-    }
-
-    .mag-align-progress-bar {
-        width: 100%;
-        height: 4px;
-        background: var(--surface-300);
-        border-radius: 2px;
-        overflow: hidden;
-    }
-
-    .mag-align-progress-fill {
-        height: 100%;
-        background: var(--primary-500);
-        border-radius: 2px;
-        transition: width 0.3s ease;
-    }
-
-    .confidence-high {
-        color: var(--success-500);
-    }
-    .confidence-medium {
-        color: var(--warning-500);
-    }
-    .confidence-low {
-        color: var(--error-500);
     }
 
     .mag-cal-section {
@@ -2031,7 +2623,7 @@ onMounted(() => {
         position: relative;
         aspect-ratio: 1;
         border-radius: 0.5rem;
-        background: #1a1a2e;
+        background: var(--scene-background);
         min-height: 200px;
         max-height: 350px;
     }
@@ -2039,7 +2631,7 @@ onMounted(() => {
     .mag-viz-mode-selector {
         position: absolute;
         top: 6px;
-        left: 6px;
+        inset-inline-start: 6px;
         z-index: 10;
         display: flex;
         gap: 2px;
@@ -2048,32 +2640,17 @@ onMounted(() => {
     }
 
     .mag-viz-mode-selector button {
-        color: #c6c6cb; /* rgba(255,255,255,0.75) over #1a1a2e — contrast 10:1 */
+        color: var(--scene-overlay-text); /* contrast 10:1 */
     }
 
     .mag-viz-mode-selector button:hover {
-        color: #fff;
-        background: #313143; /* rgba(255,255,255,0.1) over #1a1a2e */
+        color: var(--scene-overlay-text-active);
+        background: var(--scene-overlay-hover);
     }
 
     .mag-viz-mode-selector .mag-viz-active {
-        color: #fff;
-        background: #5f5f6d; /* rgba(255,255,255,0.3) over #1a1a2e — contrast 5.5:1 */
-    }
-
-    .mag-cal-progress-bar {
-        width: 100%;
-        height: 5px;
-        background: var(--surface-300);
-        border-radius: 3px;
-        overflow: hidden;
-    }
-
-    .mag-cal-progress-fill {
-        height: 100%;
-        background: var(--primary-500);
-        border-radius: 3px;
-        transition: width 0.3s ease;
+        color: var(--scene-overlay-text-active);
+        background: var(--scene-overlay-active); /* contrast 5.5:1 */
     }
 
     .mag-cal-live-inline {
@@ -2081,7 +2658,7 @@ onMounted(() => {
         gap: 0.75rem;
         font-size: 0.75rem;
         font-variant-numeric: tabular-nums;
-        color: var(--surface-600);
+        color: var(--surface-900);
         padding: 4px 8px;
         background: var(--surface-200);
         border-radius: 4px;
@@ -2103,17 +2680,17 @@ onMounted(() => {
     .mag-cal-stats-inline dd {
         margin: 0;
         font-weight: 600;
-        text-align: right;
+        text-align: end;
     }
 
-    .quality-good {
-        color: #22c55e;
+    .status-ok {
+        color: var(--success-500);
     }
-    .quality-fair {
-        color: #eab308;
+    .status-warn {
+        color: var(--warning-500);
     }
-    .quality-poor {
-        color: #ef4444;
+    .status-bad {
+        color: var(--error-500);
     }
 
     @media only screen and (max-width: 900px) {

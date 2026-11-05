@@ -2,12 +2,10 @@
     <BaseTab tab-name="servos">
         <div class="content_wrapper">
             <div class="tab_title" v-html="$t('tabServos')"></div>
-            <div class="cf_doc_version_bt">
-                <WikiButton docUrl="servos" />
-            </div>
+            <WikiButton docUrl="servos" />
 
             <div v-if="isSupported" class="flex flex-col gap-4">
-                <UiBox :title="$t('servosChangeDirection')">
+                <UiBox :title="$t('servosChangeDirection')" type="neutral" collapsible>
                     <div class="overflow-x-auto">
                         <div
                             class="grid items-center gap-y-1 min-w-0"
@@ -75,6 +73,7 @@
                                         type="checkbox"
                                         class="size-4"
                                         :checked="servo.indexOfChannelToForward === ch - 1"
+                                        :aria-label="$t('servosForwardChannel', { channel: ch, servo: index + 1 })"
                                         @change="setChannelForward(index, ch - 1, $event)"
                                     />
                                 </div>
@@ -89,13 +88,13 @@
                     </div>
 
                     <div class="flex items-center gap-2 mt-3">
-                        <USwitch v-model="liveMode" size="sm" />
+                        <USwitch v-model="liveMode" size="xs" />
                         <span class="text-sm">{{ $t("servosLiveMode") }}</span>
                     </div>
                 </UiBox>
 
                 <!-- Servo visualization bars -->
-                <UiBox :title="$t('servosText')" class="mt-4">
+                <UiBox :title="$t('servosText')" type="neutral" collapsible class="mt-4">
                     <ul class="grid grid-cols-8 gap-2 mb-1">
                         <li
                             v-for="i in 8"
@@ -139,46 +138,56 @@
         <!-- Save button toolbar -->
         <div v-if="isSupported" class="content_toolbar toolbar_fixed_bottom">
             <div class="flex gap-2">
-                <UButton :label="$t('servosButtonSave')" :disabled="!configHasChanged" @click="saveServoConfig" />
+                <UButton
+                    :label="$t('servosButtonSave')"
+                    :disabled="!configHasChanged"
+                    :loading="isSaving"
+                    size="xs"
+                    @click="saveServoConfig"
+                />
             </div>
         </div>
     </BaseTab>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, computed, onMounted } from "vue";
 import BaseTab from "./BaseTab.vue";
 import WikiButton from "@/components/elements/WikiButton.vue";
 import UiBox from "@/components/elements/UiBox.vue";
 import { useTranslation } from "i18next-vue";
-import GUI from "@/js/gui";
-import FC from "@/js/fc";
-import MSP from "@/js/msp";
-import MSPCodes from "@/js/msp/MSPCodes";
-import { mspHelper } from "@/js/msp/MSPHelper";
-import { gui_log } from "@/js/gui_log";
-import { i18n } from "@/js/localization";
-import { useInterval } from "@/composables/useInterval";
+import { useFlightControllerStore } from "@/stores/fc";
 import { useTimeout } from "@/composables/useTimeout";
+import { useServosData } from "@/composables/servos/useServosData";
+import { useServosSave } from "@/composables/servos/useServosSave";
+import { clamp } from "@/js/utils/common";
+import type { ServoConfig } from "@/stores/fc.types";
+
+/** The editable part of a servo's FC config. */
+type ServoEdit = Omit<ServoConfig, "reversedInputSources">;
 
 const { t } = useTranslation();
+const fcStore = useFlightControllerStore();
 
 const isSupported = ref(false);
 const liveMode = ref(false);
-const servoConfigs = reactive([]);
-const servoData = reactive([]);
+const servoConfigs = reactive<ServoEdit[]>([]);
+const servoData = reactive<number[]>([]);
 const originalConfigs = ref("");
 
-const { addInterval } = useInterval();
 const { addTimeout } = useTimeout();
+const { loadServoConfigs, startPolling } = useServosData();
+const { updateServos, saveServoConfig, isSaving } = useServosSave(marshalServoConfigs, () => {
+    originalConfigs.value = JSON.stringify(servoConfigs);
+});
 
-const totalChannels = computed(() => FC.RC?.active_channels || 8);
+const totalChannels = computed(() => fcStore.rc?.active_channels || 8);
 const auxChannelCount = computed(() => Math.max(0, totalChannels.value - 4));
 const configHasChanged = computed(() => originalConfigs.value !== JSON.stringify(servoConfigs));
 
 // Rate options: 100% down to -100%, as {value, label} for USelect
 const rateOptions = computed(() => {
-    const opts = [];
+    const opts: { value: number; label: string }[] = [];
     for (let i = 100; i > -101; i--) {
         opts.push({ value: i, label: `${t("servosRate")} ${i}%` });
     }
@@ -186,20 +195,20 @@ const rateOptions = computed(() => {
 });
 
 // Bar height as percentage (0-100) for UProgress
-function getBarHeight(value) {
-    const clamped = Math.min(Math.max(value - 1000, 0), 1000);
+function getBarHeight(value: number) {
+    const clamped = clamp(value - 1000, 0, 1000);
     return (clamped / 1000) * 100;
 }
 
 // Bar opacity string for CSS variable
-function getBarOpacity(value) {
-    const alpha = Math.min(Math.max((value - 1000) / 1000, 0), 1);
+function getBarOpacity(value: number) {
+    const alpha = clamp((value - 1000) / 1000, 0, 1);
     return alpha.toFixed(2);
 }
 
 // Channel forward checkbox — only one per servo (radio-like behavior)
-function setChannelForward(servoIndex, channelIndex, event) {
-    if (event.target.checked) {
+function setChannelForward(servoIndex: number, channelIndex: number, event: Event) {
+    if ((event.target as HTMLInputElement).checked) {
         servoConfigs[servoIndex].indexOfChannelToForward = channelIndex;
     } else {
         servoConfigs[servoIndex].indexOfChannelToForward = 255;
@@ -209,21 +218,23 @@ function setChannelForward(servoIndex, channelIndex, event) {
 
 function onServoChange() {
     if (liveMode.value) {
-        addTimeout("servos_update", () => updateServos(false), 10);
+        addTimeout("servos_update", () => updateServos(), 10);
     }
 }
 
-function updateServos(saveToEeprom) {
+// Marshal reactive servoConfigs into fcStore.servoConfig (clamping min/middle/max) so the
+// values sent over MSP match the UI. Also normalizes the reactive values in place.
+function marshalServoConfigs() {
     const SERVO_MIN = 500;
     const SERVO_MAX = 2500;
 
     for (let i = 0; i < servoConfigs.length; i++) {
         const src = servoConfigs[i];
-        const cfg = FC.SERVO_CONFIG[i];
+        const cfg = fcStore.servoConfig[i];
 
-        const min = Math.min(Math.max(src.min ?? SERVO_MIN, SERVO_MIN), SERVO_MAX);
-        const middle = Math.min(Math.max(src.middle ?? SERVO_MIN, SERVO_MIN), SERVO_MAX);
-        const max = Math.min(Math.max(src.max ?? SERVO_MAX, SERVO_MIN), SERVO_MAX);
+        const min = clamp(src.min ?? SERVO_MIN, SERVO_MIN, SERVO_MAX);
+        const middle = clamp(src.middle ?? SERVO_MIN, SERVO_MIN, SERVO_MAX);
+        const max = clamp(src.max ?? SERVO_MAX, SERVO_MIN, SERVO_MAX);
 
         cfg.min = min;
         cfg.middle = middle;
@@ -235,53 +246,32 @@ function updateServos(saveToEeprom) {
         src.middle = middle;
         src.max = max;
     }
-
-    mspHelper.sendServoConfigurations(() => {
-        if (saveToEeprom) {
-            mspHelper.writeConfiguration(false, () => {
-                gui_log(i18n.getMessage("servosEepromSave"));
-                originalConfigs.value = JSON.stringify(servoConfigs);
-            });
-        }
-    });
 }
 
-function saveServoConfig() {
-    updateServos(true);
-}
-
-function getServoData() {
-    MSP.send_message(MSPCodes.MSP_SERVO, false, false, () => {
-        for (let i = 0; i < FC.SERVO_DATA.length; i++) {
-            servoData[i] = FC.SERVO_DATA[i];
-        }
-    });
+function updateServoData() {
+    for (let i = 0; i < fcStore.servoData.length; i++) {
+        servoData[i] = fcStore.servoData[i];
+    }
 }
 
 async function loadServoData() {
-    if (!FC.CONFIG?.apiVersion) {
+    if (!fcStore.config?.apiVersion) {
         isSupported.value = false;
-        GUI.content_ready();
         return;
     }
 
     try {
-        await MSP.promise(MSPCodes.MSP_SERVO_CONFIGURATIONS);
-        await MSP.promise(MSPCodes.MSP_SERVO_MIX_RULES);
-        await MSP.promise(MSPCodes.MSP_RC);
-        await MSP.promise(MSPCodes.MSP_BOXNAMES);
+        await loadServoConfigs();
         initializeUI();
     } catch (e) {
         console.error("Failed to load servo configs", e);
         isSupported.value = false;
-        GUI.content_ready();
     }
 }
 
 function initializeUI() {
-    if (!FC.SERVO_CONFIG || FC.SERVO_CONFIG.length === 0) {
+    if (!fcStore.servoConfig || fcStore.servoConfig.length === 0) {
         isSupported.value = false;
-        GUI.content_ready();
         return;
     }
 
@@ -289,23 +279,20 @@ function initializeUI() {
 
     servoConfigs.length = 0;
     for (let i = 0; i < 8; i++) {
-        if (FC.SERVO_CONFIG[i]) {
+        if (fcStore.servoConfig[i]) {
             servoConfigs.push({
-                min: FC.SERVO_CONFIG[i].min,
-                middle: FC.SERVO_CONFIG[i].middle,
-                max: FC.SERVO_CONFIG[i].max,
-                rate: FC.SERVO_CONFIG[i].rate,
-                indexOfChannelToForward: FC.SERVO_CONFIG[i].indexOfChannelToForward,
+                min: fcStore.servoConfig[i].min,
+                middle: fcStore.servoConfig[i].middle,
+                max: fcStore.servoConfig[i].max,
+                rate: fcStore.servoConfig[i].rate,
+                indexOfChannelToForward: fcStore.servoConfig[i].indexOfChannelToForward,
             });
         }
     }
 
     originalConfigs.value = JSON.stringify(servoConfigs);
 
-    addInterval("servo_data_pull", getServoData, 50);
-    addInterval("status_pull", () => MSP.send_message(MSPCodes.MSP_STATUS), 250, true);
-
-    GUI.content_ready();
+    startPolling(updateServoData);
 }
 
 onMounted(() => {

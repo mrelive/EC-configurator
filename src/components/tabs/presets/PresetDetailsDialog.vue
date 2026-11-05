@@ -1,12 +1,15 @@
 <template>
-    <dialog
-        ref="dialogRef"
-        class="w-[600px] max-w-[calc(100vw-2rem)] h-[520px] p-3 pb-0"
-        @close="emit('close')"
-        @cancel.prevent="requestClose"
+    <UModal
+        :open="open"
+        :close="false"
+        :ui="{
+            content: 'w-[600px] max-w-[calc(100vw-2rem)] h-[520px]',
+            body: 'overflow-visible min-h-0',
+        }"
+        @update:open="onOpenChange"
     >
-        <div class="flex flex-col flex-1 min-h-0 h-full">
-            <div class="flex flex-col flex-1 min-h-0">
+        <template #body>
+            <div class="flex flex-col flex-1 min-h-0 h-full">
                 <div v-if="!loading && preset" class="flex flex-col flex-1 min-h-0">
                     <PresetCard
                         :preset="preset"
@@ -54,7 +57,7 @@
                                                     emit('select-exclusive-option', {
                                                         selectedOptionId: child.id,
                                                         groupOptionIds: option.childs.map(
-                                                            (groupOption) => groupOption.id,
+                                                            (groupOption: { id: string }) => groupOption.id,
                                                         ),
                                                     })
                                                 "
@@ -66,7 +69,7 @@
                                                 @change="
                                                     emit('toggle-option', {
                                                         optionId: child.id,
-                                                        checked: $event.target.checked,
+                                                        checked: ($event.target as HTMLInputElement).checked,
                                                     })
                                                 "
                                             />
@@ -81,7 +84,7 @@
                                         @change="
                                             emit('toggle-option', {
                                                 optionId: option.id,
-                                                checked: $event.target.checked,
+                                                checked: ($event.target as HTMLInputElement).checked,
                                             })
                                         "
                                     />
@@ -104,8 +107,10 @@
                 <div v-if="loading" class="data-loading h-[300px]"></div>
                 <div v-if="error" class="p-5 text-(--ui-error)">{{ error }}</div>
             </div>
+        </template>
 
-            <div class="flex flex-wrap items-center justify-between gap-2 mt-auto mx-[-12px] py-2 px-3">
+        <template #footer>
+            <div class="flex flex-wrap items-center justify-end gap-2 w-full">
                 <div class="flex items-center flex-wrap gap-1.5">
                     <UButton
                         v-if="!showCli"
@@ -142,17 +147,17 @@
                         data-testid="preset-discussion-link"
                     />
                 </div>
-                <div class="flex flex-wrap justify-end gap-1.5 ml-auto">
+                <div class="flex flex-wrap justify-end gap-1.5">
                     <UButton :label="$t('presetsApply')" :disabled="loading || !!error" @click="handleApply" />
                     <UButton :label="$t('close')" variant="outline" @click="requestClose" />
                 </div>
             </div>
-        </div>
-    </dialog>
+        </template>
+    </UModal>
 </template>
 
-<script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { i18n } from "@/js/localization";
@@ -223,11 +228,10 @@ const emit = defineEmits([
     "options-expanded-change",
 ]);
 
-const dialogRef = ref(null);
-const optionsDetailsRef = ref(null);
+const optionsDetailsRef = ref<HTMLDetailsElement | null>(null);
 
-function handleClickOutside(event) {
-    if (optionsDetailsRef.value?.open && !optionsDetailsRef.value.contains(event.target)) {
+function handleClickOutside(event: MouseEvent) {
+    if (optionsDetailsRef.value?.open && !optionsDetailsRef.value.contains(event.target as Node)) {
         optionsDetailsRef.value.open = false;
         emit("options-expanded-change", false);
     }
@@ -248,7 +252,7 @@ const totalOptionsCount = computed(() => {
         return 0;
     }
 
-    return props.preset.options.reduce((count, option) => {
+    return props.preset.options.reduce((count: number, option: { childs?: unknown[] }) => {
         if (Array.isArray(option.childs)) {
             return count + option.childs.length;
         }
@@ -280,7 +284,8 @@ const descriptionHtml = computed(() => {
         return "";
     }
 
-    const renderedHtml = DOMPurify.sanitize(marked.parse(descriptionText.value));
+    // marked.parse() is typed string | Promise<string> for its async mode, which is not used.
+    const renderedHtml = DOMPurify.sanitize(marked.parse(descriptionText.value) as string);
     const wrapper = document.createElement("div");
     wrapper.innerHTML = renderedHtml;
     wrapper.querySelectorAll("a").forEach((link) => {
@@ -290,29 +295,17 @@ const descriptionHtml = computed(() => {
     return wrapper.innerHTML;
 });
 
-watch(
-    () => props.open,
-    async (isOpen) => {
-        await nextTick();
-
-        if (!dialogRef.value) {
-            return;
-        }
-
-        if (isOpen && !dialogRef.value.open) {
-            dialogRef.value.showModal();
-        } else if (!isOpen && dialogRef.value.open) {
-            dialogRef.value.close();
-        }
-    },
-    { immediate: true },
-);
-
 function requestClose() {
     emit("close");
 }
 
-function sanitizeExternalHttpUrl(rawUrl) {
+function onOpenChange(value: boolean) {
+    if (!value && props.open) {
+        requestClose();
+    }
+}
+
+function sanitizeExternalHttpUrl(rawUrl: string) {
     if (!rawUrl) {
         return "";
     }
@@ -325,7 +318,7 @@ function sanitizeExternalHttpUrl(rawUrl) {
     }
 }
 
-function decodeHtmlEntities(text) {
+function decodeHtmlEntities(text: string) {
     if (!text) {
         return "";
     }
@@ -341,20 +334,15 @@ function handleApply() {
     }
 }
 
-function handleOptionsToggle(event) {
-    emit("options-expanded-change", event.target.open);
+function handleOptionsToggle(event: Event) {
+    emit("options-expanded-change", (event.target as HTMLDetailsElement).open);
 }
 </script>
 
 <style>
-/* Details dialog: show as flex when open */
-dialog[open]:has(.preset-description-text) {
-    display: flex;
-}
-
-/* Preset title styling inside the details dialog */
-.tab-presets dialog .preset-description-text + .preset-description-text,
-.tab-presets dialog .preset-description-text {
+/* Preset description styling (modal body is teleported, so no .tab-presets ancestor) */
+.preset-description-text + .preset-description-text,
+.preset-description-text {
     padding-top: 6px;
     padding-bottom: 6px;
     margin-top: 12px;
@@ -376,8 +364,8 @@ dialog[open]:has(.preset-description-text) {
     content: "";
     width: 0;
     height: 0;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
+    border-inline-start: 5px solid transparent;
+    border-inline-end: 5px solid transparent;
     border-top: 6px solid var(--ui-text);
     justify-self: end;
     opacity: 0.65;
@@ -385,8 +373,8 @@ dialog[open]:has(.preset-description-text) {
 }
 
 details[open] > .preset-options-summary {
-    border-bottom-left-radius: 0;
-    border-bottom-right-radius: 0;
+    border-end-start-radius: 0;
+    border-end-end-radius: 0;
 }
 
 details[open] > .preset-options-summary::after {
@@ -418,16 +406,16 @@ details[open] > .preset-options-summary::after {
 
 .preset-description-html ul,
 .preset-description-html ol {
-    padding-left: 25px;
+    padding-inline-start: 25px;
 }
 
 .preset-description-html ul li {
-    padding-left: 12px;
+    padding-inline-start: 12px;
     list-style-type: disclosure-closed;
 }
 
 .preset-description-html ol li {
-    padding-left: 12px;
+    padding-inline-start: 12px;
     list-style-type: decimal;
 }
 

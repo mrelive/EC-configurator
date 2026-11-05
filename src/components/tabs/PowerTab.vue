@@ -8,13 +8,13 @@
             </div>
 
             <!-- Battery Profile Selector -->
-            <UiBox v-if="hasBatteryProfiles" :title="$t('powerBatteryProfile')">
+            <UiBox v-if="hasBatteryProfiles" :title="$t('powerBatteryProfile')" type="neutral" collapsible>
                 <SettingRow :label="$t('powerBatteryProfile')">
                     <USelect
                         :items="batteryProfileItems"
                         :model-value="activeBatteryProfile"
                         @update:model-value="onBatteryProfileChange"
-                        size="sm"
+                        size="xs"
                         class="min-w-40"
                     />
                 </SettingRow>
@@ -23,7 +23,7 @@
                         v-model="batteryProfileName"
                         maxlength="8"
                         :placeholder="$t('powerBatteryProfileNamePlaceholder')"
-                        size="sm"
+                        size="xs"
                     />
                 </SettingRow>
             </UiBox>
@@ -32,13 +32,13 @@
                 <!-- Left Column -->
                 <div class="flex flex-col gap-4">
                     <!-- Battery Configuration -->
-                    <UiBox :title="$t('powerBatteryHead')">
+                    <UiBox :title="$t('powerBatteryHead')" type="neutral" collapsible>
                         <SettingRow :label="$t('powerBatteryVoltageMeterSource')">
                             <USelect
                                 :items="batteryMeterTypeItems"
                                 v-model="batteryConfig.voltageMeterSource"
                                 @update:model-value="onVoltageMeterSourceChange"
-                                size="sm"
+                                size="xs"
                                 class="min-w-40"
                             />
                         </SettingRow>
@@ -47,7 +47,7 @@
                                 :items="currentMeterTypeItems"
                                 v-model="batteryConfig.currentMeterSource"
                                 @update:model-value="onCurrentMeterSourceChange"
-                                size="sm"
+                                size="xs"
                                 class="min-w-40"
                             />
                         </SettingRow>
@@ -90,7 +90,7 @@
                                 class="w-16"
                             />
                         </SettingRow>
-                        <SettingRow :label="$t('powerBatteryCapacity')">
+                        <SettingRow :label="$t('powerBatteryCapacity')" :help="$t('powerBatteryCapacityHelp')">
                             <UInputNumber
                                 id="capacity"
                                 name="capacity"
@@ -107,7 +107,7 @@
                     </UiBox>
 
                     <!-- Voltage Configuration -->
-                    <UiBox v-show="showVoltageConfiguration" :title="$t('powerVoltageHead')">
+                    <UiBox v-show="showVoltageConfiguration" :title="$t('powerVoltageHead')" type="neutral" collapsible>
                         <UiBox highlight class="mb-3">
                             <div v-html="$t('powerVoltageWarning')"></div>
                         </UiBox>
@@ -170,7 +170,7 @@
                 <!-- Right Column -->
                 <div class="flex flex-col gap-4">
                     <!-- Battery State -->
-                    <UiBox :title="$t('powerStateHead')">
+                    <UiBox :title="$t('powerStateHead')" type="neutral" collapsible>
                         <div class="flex justify-between items-center">
                             <span v-html="$t('powerBatteryConnected')"></span>
                             <span>
@@ -193,10 +193,23 @@
                             <span v-html="$t('powerBatteryAmperage')"></span>
                             <span>{{ $t("powerAmperageValue", { 1: batteryState.amperage.toFixed(2) }) }}</span>
                         </div>
+                        <div class="flex justify-between items-center">
+                            <span v-html="$t('powerBatteryPowerDraw')"></span>
+                            <span>{{ $t("powerWattValue", { 1: powerDraw.toFixed(1) }) }}</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span v-html="$t('powerBatteryVoltageDrop')"></span>
+                            <span>{{ $t("powerVoltageValue", { 1: voltageDrop.toFixed(2) }) }}</span>
+                        </div>
                     </UiBox>
 
                     <!-- Amperage Configuration -->
-                    <UiBox v-show="showAmperageConfiguration" :title="$t('powerAmperageHead')">
+                    <UiBox
+                        v-show="showAmperageConfiguration"
+                        :title="$t('powerAmperageHead')"
+                        type="neutral"
+                        collapsible
+                    >
                         <UiBox highlight class="mb-3">
                             <div v-html="$t('powerAmperageWarning')"></div>
                         </UiBox>
@@ -258,8 +271,15 @@
                 v-if="showCalibration"
                 @click="openCalibrationManager"
                 variant="soft"
+                size="xs"
             />
-            <UButton :label="$t('powerButtonSave')" :disabled="!dirty" @click="handleSave" />
+            <UButton
+                :label="$t('powerButtonSave')"
+                :disabled="!dirty"
+                :loading="isSaving"
+                @click="handleSave"
+                size="xs"
+            />
         </div>
 
         <!-- Calibration Manager Dialog -->
@@ -357,18 +377,18 @@
     </BaseTab>
 </template>
 
-<script>
+<script lang="ts">
 import { defineComponent, onMounted, computed, nextTick, ref } from "vue";
 import BaseTab from "./BaseTab.vue";
 import WikiButton from "../elements/WikiButton.vue";
 import Dialog from "../elements/Dialog.vue";
 import UiBox from "../elements/UiBox.vue";
 import SettingRow from "../elements/SettingRow.vue";
-import GUI from "../../js/gui";
-import FC from "../../js/fc";
+import { useFlightControllerStore } from "@/stores/fc";
 import { i18n } from "../../js/localization";
 import { usePower } from "../../composables/usePower";
 import { useInterval } from "../../composables/useInterval";
+import { useSaving } from "../../composables/useSaving";
 
 export default defineComponent({
     name: "PowerTab",
@@ -380,12 +400,15 @@ export default defineComponent({
         SettingRow,
     },
     setup() {
+        const fcStore = useFlightControllerStore();
         const {
             supported,
             hasBatteryProfiles,
             activeBatteryProfile,
             batteryProfileName,
             batteryState,
+            powerDraw,
+            voltageDrop,
             voltageMeters,
             currentMeters,
             batteryConfig,
@@ -423,7 +446,7 @@ export default defineComponent({
         } = usePower();
 
         const calibrationVisibility = computed(() => getCalibrationVisibility());
-        const numberOfBatteryProfiles = computed(() => FC.CONFIG.numberOfBatteryProfiles || 0);
+        const numberOfBatteryProfiles = computed(() => fcStore.config.numberOfBatteryProfiles || 0);
 
         const batteryProfileItems = computed(() =>
             Array.from({ length: numberOfBatteryProfiles.value }, (_, i) => ({
@@ -440,7 +463,7 @@ export default defineComponent({
             currentMeterTypes.value.map((type, index) => ({ label: type, value: index })),
         );
 
-        const onBatteryProfileChange = async (value) => {
+        const onBatteryProfileChange = async (value: unknown) => {
             const profileIndex = Number(value);
             if (!Number.isInteger(profileIndex) || profileIndex < 0 || profileIndex >= numberOfBatteryProfiles.value) {
                 return;
@@ -463,7 +486,6 @@ export default defineComponent({
 
             nextTick(() => {
                 i18n.localizePage();
-                GUI.content_ready();
             });
 
             // Start polling
@@ -472,9 +494,13 @@ export default defineComponent({
 
         // Interval cleanup handled automatically by useInterval on unmount
 
-        const handleSave = () => {
-            saveConfig(() => loadData());
-        };
+        const { isSaving, runSave } = useSaving();
+
+        const handleSave = () =>
+            runSave(async () => {
+                await saveConfig();
+                await loadData();
+            });
 
         const openCalibrationManager = () => {
             sourceschanged.value = false;
@@ -519,6 +545,8 @@ export default defineComponent({
             currentMeterTypeItems,
             onBatteryProfileChange,
             batteryState,
+            powerDraw,
+            voltageDrop,
             voltageMeters,
             currentMeters,
             batteryConfig,
@@ -538,6 +566,7 @@ export default defineComponent({
             openCalibrationManager,
             calibrationVisibility,
             handleSave,
+            isSaving,
             vbatcalibrationValue,
             amperagecalibrationValue,
             vbatscalechanged,

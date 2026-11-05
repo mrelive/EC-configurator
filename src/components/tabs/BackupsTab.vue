@@ -3,19 +3,18 @@
         <div class="content_wrapper grid-box col1">
             <div class="tab_title">{{ $t("tabBackups") }}</div>
             <!-- Loading State -->
-            <div v-if="isLoading" class="flex items-center justify-center py-16">
-                <UIcon name="i-lucide-loader-circle" class="size-5 animate-spin text-[var(--color-primary-500)]" />
+            <TabLoadingState v-if="isLoading">
                 <span class="ml-2 text-dimmed">{{ $t("dataWaitingForData") }}</span>
-            </div>
+            </TabLoadingState>
 
             <template v-else>
                 <!-- Message from API (e.g. membership info) -->
-                <UiBox v-if="backupMessage" type="neutral">
+                <UiBox v-if="backupMessage" type="neutral" collapsible>
                     <p>{{ backupMessage }}</p>
                 </UiBox>
 
                 <!-- Backup list per craft -->
-                <UiBox :title="$t('tabBackups')">
+                <UiBox :title="$t('tabBackups')" type="neutral" collapsible>
                     <div v-if="backups.length === 0" class="text-dimmed text-sm py-4">
                         {{ $t("backupNoBackupsAvailable") }}
                     </div>
@@ -23,39 +22,119 @@
                     <template v-for="(groupBackups, craft) in groupedBackups" :key="craft">
                         <div class="mb-4">
                             <div class="text-sm font-bold text-[var(--color-primary-500)] mb-1">{{ craft }}</div>
-                            <UTable :data="groupBackups" :columns="columns" class="text-sm">
-                                <template #created-cell="{ row }">
-                                    {{ formatDate(row.original.created) }}
-                                </template>
-                                <template #description-cell="{ row }">
-                                    <span class="text-dimmed">{{ row.original.description || "" }}</span>
-                                </template>
-                                <template #actions-cell="{ row }">
-                                    <div class="flex gap-2">
+                            <!-- Table layout: md and up -->
+                            <div class="overflow-x-auto hidden md:block">
+                                <UTable :data="groupBackups" :columns="columns" class="text-sm">
+                                    <template #created-cell="{ row }">
+                                        {{ formatDate(row.original.created) }}
+                                    </template>
+                                    <template #name-cell="{ row }">
+                                        <span class="block w-[160px] truncate" :title="row.original.name || ''">
+                                            {{ row.original.name || "" }}
+                                        </span>
+                                    </template>
+                                    <template #description-cell="{ row }">
+                                        <span
+                                            class="text-dimmed block w-[240px] truncate"
+                                            :title="row.original.description || ''"
+                                        >
+                                            {{ row.original.description || "" }}
+                                        </span>
+                                    </template>
+                                    <template #actions-cell="{ row }">
+                                        <div class="flex gap-2 whitespace-nowrap shrink-0">
+                                            <UButton
+                                                size="xs"
+                                                variant="soft"
+                                                icon="i-lucide-download"
+                                                @click="downloadBackup(row.original)"
+                                            >
+                                                {{ $t("actionDownload") }}
+                                            </UButton>
+                                            <UTooltip :text="$t('backupRequiresConnection')" :disabled="isConnected">
+                                                <span>
+                                                    <UButton
+                                                        size="xs"
+                                                        variant="soft"
+                                                        color="success"
+                                                        icon="i-lucide-upload"
+                                                        :disabled="!isConnected || isRestoreBusy"
+                                                        :class="{ 'pointer-events-none': !isConnected }"
+                                                        @click="restoreBackup(row.original)"
+                                                    >
+                                                        {{ $t("actionRestore") }}
+                                                    </UButton>
+                                                </span>
+                                            </UTooltip>
+                                            <UButton
+                                                size="xs"
+                                                variant="soft"
+                                                icon="i-lucide-pencil"
+                                                @click="startEdit(row.original)"
+                                            >
+                                                {{ $t("actionEdit") }}
+                                            </UButton>
+                                            <UButton
+                                                size="xs"
+                                                variant="soft"
+                                                color="error"
+                                                icon="i-lucide-trash-2"
+                                                @click="deleteBackup(row.original.id)"
+                                            >
+                                                {{ $t("actionDelete") }}
+                                            </UButton>
+                                        </div>
+                                    </template>
+                                </UTable>
+                            </div>
+
+                            <!-- Card layout: below md, so actions wrap instead of requiring horizontal scroll -->
+                            <div class="flex flex-col gap-2 md:hidden">
+                                <div
+                                    v-for="backup in groupBackups"
+                                    :key="backup.id"
+                                    class="border border-default rounded-lg p-3 flex flex-col gap-2"
+                                >
+                                    <div class="flex items-baseline justify-between gap-2">
+                                        <span class="min-w-0 flex-1 font-semibold break-words">{{
+                                            backup.name || ""
+                                        }}</span>
+                                        <span class="text-dimmed text-xs whitespace-nowrap">{{
+                                            formatDate(backup.created)
+                                        }}</span>
+                                    </div>
+                                    <p v-if="backup.description" class="text-dimmed text-sm break-words">
+                                        {{ backup.description }}
+                                    </p>
+                                    <div class="flex flex-wrap gap-2">
                                         <UButton
                                             size="xs"
                                             variant="soft"
                                             icon="i-lucide-download"
-                                            @click="downloadBackup(row.original)"
+                                            @click="downloadBackup(backup)"
                                         >
                                             {{ $t("actionDownload") }}
                                         </UButton>
-                                        <UButton
-                                            v-if="isConnected"
-                                            size="xs"
-                                            variant="soft"
-                                            color="success"
-                                            icon="i-lucide-upload"
-                                            :disabled="isRestoreBusy"
-                                            @click="restoreBackup(row.original)"
-                                        >
-                                            {{ $t("actionRestore") }}
-                                        </UButton>
+                                        <UTooltip :text="$t('backupRequiresConnection')" :disabled="isConnected">
+                                            <span>
+                                                <UButton
+                                                    size="xs"
+                                                    variant="soft"
+                                                    color="success"
+                                                    icon="i-lucide-upload"
+                                                    :disabled="!isConnected || isRestoreBusy"
+                                                    :class="{ 'pointer-events-none': !isConnected }"
+                                                    @click="restoreBackup(backup)"
+                                                >
+                                                    {{ $t("actionRestore") }}
+                                                </UButton>
+                                            </span>
+                                        </UTooltip>
                                         <UButton
                                             size="xs"
                                             variant="soft"
                                             icon="i-lucide-pencil"
-                                            @click="startEdit(row.original)"
+                                            @click="startEdit(backup)"
                                         >
                                             {{ $t("actionEdit") }}
                                         </UButton>
@@ -64,13 +143,13 @@
                                             variant="soft"
                                             color="error"
                                             icon="i-lucide-trash-2"
-                                            @click="deleteBackup(row.original.id)"
+                                            @click="deleteBackup(backup.id)"
                                         >
                                             {{ $t("actionDelete") }}
                                         </UButton>
                                     </div>
-                                </template>
-                            </UTable>
+                                </div>
+                            </div>
                         </div>
                     </template>
                 </UiBox>
@@ -81,11 +160,11 @@
                 <div class="flex flex-col gap-3">
                     <div>
                         <label class="text-sm font-semibold block mb-1">{{ $t("labelName") }}</label>
-                        <UInput v-model="editForm.name" size="sm" class="w-full" />
+                        <UInput v-model="editForm.name" size="xs" class="w-full" />
                     </div>
                     <div>
                         <label class="text-sm font-semibold block mb-1">{{ $t("labelDescription") }}</label>
-                        <UTextarea v-model="editForm.description" size="sm" class="w-full" :rows="4" />
+                        <UTextarea v-model="editForm.description" size="xs" class="w-full" :rows="4" />
                     </div>
                     <div class="text-sm">
                         <span class="font-semibold">{{ $t("labelCreated") }}</span>
@@ -93,98 +172,148 @@
                     </div>
                 </div>
                 <template #footer>
-                    <UButton @click="saveBackupChanges" size="sm">
+                    <UButton @click="saveBackupChanges" size="xs">
                         {{ $t("actionSave") }}
                     </UButton>
                 </template>
             </Dialog>
 
             <!-- Restore progress dialog -->
-            <dialog ref="restoreProgressDialogRef" class="w-[320px] h-fit p-6" @cancel.prevent>
-                <div class="text-lg mb-2" v-html="$t('userBackupRestoreInProgress')"></div>
-                <div class="text-sm text-dimmed" v-html="$t('presetsPleaseWait')"></div>
-                <UProgress :model-value="restoreProgress" :max="100" class="mt-3" />
-            </dialog>
+            <UModal :open="restoreProgressOpen" :close="false" :dismissible="false" :ui="{ content: 'w-[320px]' }">
+                <template #body>
+                    <div class="text-lg mb-2" v-html="$t('userBackupRestoreInProgress')"></div>
+                    <div class="text-sm text-dimmed" v-html="$t('presetsPleaseWait')"></div>
+                    <UProgress :model-value="restoreProgress" :max="100" class="mt-3" />
+                </template>
+            </UModal>
 
             <!-- Restore errors dialog -->
-            <dialog
-                ref="restoreErrorsDialogRef"
-                class="w-[600px] max-w-[calc(100vw-2rem)] h-fit p-6"
-                @close="handleRestoreErrorsClose"
-                @cancel.prevent
+            <UModal
+                :open="restoreErrorsOpen"
+                :close="false"
+                :dismissible="false"
+                :ui="{ content: 'w-[600px] max-w-[calc(100vw-2rem)]' }"
             >
-                <div class="text-lg mb-2" v-html="$t('userBackupRestoreErrors')"></div>
-                <div class="backups_cli_background">
-                    <div class="backups_cli_window">
-                        <template v-for="(failure, idx) in restoreErrors" :key="idx">
-                            <div>{{ failure.command }}</div>
-                            <div
-                                v-for="(line, lineIdx) in failure.response"
-                                :key="lineIdx"
-                                :class="{ error_message: line.startsWith('###ERROR') }"
-                            >
-                                {{ line }}
-                            </div>
-                        </template>
+                <template #title>
+                    <span v-html="$t('userBackupRestoreErrors')"></span>
+                </template>
+                <template #body>
+                    <div class="backups_cli_background">
+                        <div class="backups_cli_window">
+                            <template v-for="(failure, idx) in restoreErrors" :key="idx">
+                                <div>{{ failure.command }}</div>
+                                <div
+                                    v-for="(line, lineIdx) in failure.response"
+                                    :key="lineIdx"
+                                    :class="{ error_message: line.startsWith('###ERROR') }"
+                                >
+                                    {{ line }}
+                                </div>
+                            </template>
+                        </div>
                     </div>
-                </div>
-                <div class="flex gap-2 justify-end mt-3">
-                    <UButton :label="$t('presetsButtonCancel')" variant="outline" @click="closeRestoreErrors(false)" />
-                    <UButton :label="$t('presetsSaveAnyway')" @click="closeRestoreErrors(true)" />
-                </div>
-            </dialog>
+                </template>
+                <template #footer>
+                    <div class="flex justify-end gap-2 w-full">
+                        <UButton
+                            :label="$t('presetsButtonCancel')"
+                            variant="outline"
+                            @click="closeRestoreErrors(false)"
+                        />
+                        <UButton :label="$t('presetsSaveAnyway')" @click="closeRestoreErrors(true)" />
+                    </div>
+                </template>
+            </UModal>
         </div>
 
         <!-- Bottom toolbar -->
-        <div v-if="isConnected" class="content_toolbar toolbar_fixed_bottom flex items-center gap-2">
+        <div class="content_toolbar toolbar_fixed_bottom flex items-center gap-2">
             <div class="flex-1"></div>
-            <UButton @click="createBackup" size="sm" icon="i-lucide-save">
-                {{ $t("actionBackup") }}
-            </UButton>
+            <UTooltip :text="$t('backupRequiresConnection')" :disabled="isConnected">
+                <span>
+                    <UButton
+                        size="xs"
+                        icon="i-lucide-save"
+                        :disabled="!isConnected"
+                        :class="{ 'pointer-events-none': !isConnected }"
+                        @click="createBackup"
+                    >
+                        {{ $t("actionBackup") }}
+                    </UButton>
+                </span>
+            </UTooltip>
         </div>
     </BaseTab>
 </template>
 
-<script setup>
-import { ref, computed, nextTick, onMounted, onUnmounted, watch } from "vue";
+<script setup lang="ts">
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useTranslation } from "i18next-vue";
 import BaseTab from "./BaseTab.vue";
 import UiBox from "../elements/UiBox.vue";
 import Dialog from "../elements/Dialog.vue";
+import TabLoadingState from "../elements/TabLoadingState.vue";
 import loginManager from "@/js/LoginManager";
 import { gui_log } from "@/js/gui_log";
 import { useConnectionStore } from "@/stores/connection";
 import {
     MIN_FC_VERSION_FOR_MSP_CLI,
     cancelScheduledReconnect,
+    isConnectionClosedError,
     isMspCliSupported,
     saveAndReconnect,
     scheduleReconnect,
     useMspCliSession,
 } from "@/composables/useMspCliSession";
 import { useDialog } from "@/composables/useDialog";
-import FC from "@/js/fc";
+import { useFlightControllerStore } from "@/stores/fc";
+import type { default as UserApi, Backup } from "@/js/UserApi";
+
+/** One failed command of a restore batch, as useMspCliSession's runBatch reports it. */
+interface RestoreFailure {
+    command: string;
+    response: string[];
+    errors: string[];
+}
+
+/** `error.message || error`, for an error of unknown shape. */
+function describeError(error: unknown) {
+    if (typeof error === "object" && error !== null && "message" in error) {
+        return error.message || error;
+    }
+    return error;
+}
 
 const { t } = useTranslation();
 const connectionStore = useConnectionStore();
+const fcStore = useFlightControllerStore();
 const cliSession = useMspCliSession();
 const dialog = useDialog();
 
 const isLoading = ref(true);
-const backups = ref([]);
-const backupMessage = ref(null);
+const backups = ref<Backup[]>([]);
+const backupMessage = ref<string | null>(null);
 const isEditing = ref(false);
-const editForm = ref({ id: null, name: "", description: "", created: null });
+const editForm = ref<{
+    id: Backup["id"] | null;
+    name: string | undefined;
+    description: string;
+    created: string | null | undefined;
+}>({
+    id: null,
+    name: "",
+    description: "",
+    created: null,
+});
 const restoreProgress = ref(0);
 const restoreProgressOpen = ref(false);
-const restoreErrors = ref([]);
+const restoreErrors = ref<RestoreFailure[]>([]);
 const restoreErrorsOpen = ref(false);
 const restoreSavePressed = ref(false);
-const restoreProgressDialogRef = ref(null);
-const restoreErrorsDialogRef = ref(null);
-let userApi = null;
-let unsubscribeLogin = null;
-let unsubscribeLogout = null;
+let userApi: UserApi | null = null;
+// The unsubscribe functions LoginManager returns; take their type from there.
+let unsubscribeLogin: ReturnType<typeof loginManager.onLogin> | null = null;
+let unsubscribeLogout: ReturnType<typeof loginManager.onLogout> | null = null;
 
 const columns = computed(() => [
     { accessorKey: "created", header: t("labelDate") },
@@ -194,7 +323,7 @@ const columns = computed(() => [
 ]);
 
 const groupedBackups = computed(() => {
-    const grouped = {};
+    const grouped: Record<string, Backup[]> = {};
     for (const backup of backups.value) {
         const key = backup.key || "Unknown";
         if (!grouped[key]) {
@@ -219,7 +348,7 @@ async function ensureMspCliSupported() {
         t("warningTitle"),
         t("mspCliFirmwareTooOld", {
             required: MIN_FC_VERSION_FOR_MSP_CLI,
-            current: FC.CONFIG?.flightControllerVersion || "?",
+            current: fcStore.config?.flightControllerVersion || "?",
         }),
         { confirmText: t("close") },
     );
@@ -270,11 +399,11 @@ async function createBackup() {
         gui_log(t("profileBackupApiSuccess"));
         await loadBackups();
     } catch (error) {
-        gui_log(`${t("profileBackupApiFail")}: ${error.message || error}`);
+        gui_log(`${t("profileBackupApiFail")}: ${describeError(error)}`);
     }
 }
 
-async function downloadBackup(backup) {
+async function downloadBackup(backup: Backup) {
     try {
         if (!userApi) {
             throw new Error(t("notLoggedIn"));
@@ -301,7 +430,7 @@ async function downloadBackup(backup) {
     }
 }
 
-function startEdit(backup) {
+function startEdit(backup: Backup) {
     editForm.value = {
         id: backup.id,
         name: backup.name,
@@ -330,7 +459,7 @@ async function saveBackupChanges() {
     }
 }
 
-async function restoreBackup(backup) {
+async function restoreBackup(backup: Backup) {
     if (!userApi) {
         gui_log(t("notLoggedIn"));
         return;
@@ -357,7 +486,7 @@ async function restoreBackup(backup) {
         return;
     }
 
-    let text;
+    let text: string;
     try {
         const response = await userApi.downloadBackupFile(backup.id);
         text = response.file;
@@ -365,13 +494,18 @@ async function restoreBackup(backup) {
             throw new Error(t("userBackupFileEmpty"));
         }
     } catch (error) {
-        gui_log(`${t("userBackupRestoreFailed")}: ${error.message || error}`);
+        gui_log(`${t("userBackupRestoreFailed")}: ${describeError(error)}`);
         return;
     }
 
     const fileLines = text.split(/\r?\n/);
     const hasDefaultsPrefix = fileLines.some((line) => line.trim().toLowerCase() === "defaults nosave");
-    const commands = hasDefaultsPrefix ? fileLines : ["defaults nosave", "", ...fileLines];
+    // A `diff all` / `dump` backup ends with a `save`, which reboots the FC. Replaying it
+    // inside the batch reboots the FC mid-batch and the `save` response times out, surfacing
+    // as a spurious "CLI errors" warning on every restore. Drop it and let saveAndReconnect()
+    // persist and reconnect after the batch (it already tolerates the reboot timeout).
+    const withoutSave = fileLines.filter((line) => line.trim().toLowerCase() !== "save");
+    const commands = hasDefaultsPrefix ? withoutSave : ["defaults nosave", "", ...withoutSave];
 
     restoreProgress.value = 0;
     restoreProgressOpen.value = true;
@@ -399,9 +533,10 @@ async function restoreBackup(backup) {
     await saveAndReconnect();
 }
 
-function closeRestoreErrors(saveAnyway) {
+function closeRestoreErrors(saveAnyway: boolean) {
     restoreSavePressed.value = saveAnyway;
     restoreErrorsOpen.value = false;
+    handleRestoreErrorsClose();
 }
 
 async function handleRestoreErrorsClose() {
@@ -416,37 +551,16 @@ async function handleRestoreErrorsClose() {
     try {
         await cliSession.send("exit");
     } catch (error) {
-        console.error("Failed to send exit:", error);
+        // `exit` reboots the FC; the port closing before it replies is expected, not a failure.
+        if (!isConnectionClosedError(error)) {
+            console.error("Failed to send exit:", error);
+        }
     } finally {
         scheduleReconnect();
     }
 }
 
-watch(restoreProgressOpen, async (isOpen) => {
-    await nextTick();
-    if (!restoreProgressDialogRef.value) {
-        return;
-    }
-    if (isOpen && !restoreProgressDialogRef.value.open) {
-        restoreProgressDialogRef.value.showModal();
-    } else if (!isOpen && restoreProgressDialogRef.value.open) {
-        restoreProgressDialogRef.value.close();
-    }
-});
-
-watch(restoreErrorsOpen, async (isOpen) => {
-    await nextTick();
-    if (!restoreErrorsDialogRef.value) {
-        return;
-    }
-    if (isOpen && !restoreErrorsDialogRef.value.open) {
-        restoreErrorsDialogRef.value.showModal();
-    } else if (!isOpen && restoreErrorsDialogRef.value.open) {
-        restoreErrorsDialogRef.value.close();
-    }
-});
-
-async function deleteBackup(backupId) {
+async function deleteBackup(backupId: Backup["id"]) {
     const confirmed = globalThis.confirm(t("confirmDelete", { item: t("itemBackup") }));
     if (!confirmed) {
         return;
@@ -466,7 +580,7 @@ async function deleteBackup(backupId) {
     }
 }
 
-function formatDate(dateString) {
+function formatDate(dateString: string | null | undefined) {
     if (!dateString) {
         return "";
     }
@@ -487,7 +601,7 @@ onUnmounted(() => {
 });
 </script>
 
-<style scoped>
+<style lang="less">
 .backups_cli_background {
     border: 1px solid var(--ui-border);
     background-color: rgba(64, 64, 64, 1);
@@ -495,18 +609,18 @@ onUnmounted(() => {
     border-radius: 5px;
     box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.8);
     overflow-y: auto;
-}
 
-.backups_cli_window {
-    padding: 5px;
-    font-family: monospace;
-    color: white;
-    white-space: pre-wrap;
-    user-select: text;
-}
+    .backups_cli_window {
+        padding: 5px;
+        font-family: monospace;
+        color: white;
+        white-space: pre-wrap;
+        user-select: text;
+    }
 
-.backups_cli_window .error_message {
-    color: red;
-    font-weight: bold;
+    .backups_cli_window .error_message {
+        color: red;
+        font-weight: bold;
+    }
 }
 </style>

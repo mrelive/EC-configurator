@@ -2,7 +2,7 @@
     <BaseTab tab-name="pid_tuning">
         <div class="content_wrapper">
             <div class="tab_title">{{ $t("tabPidTuning") }}</div>
-            <WikiButton docUrl="PID-Tuning" />
+            <WikiButton docUrl="pid_tuning" />
 
             <div class="flex items-start gap-3 flex-wrap mb-2">
                 <!-- Profile Selector -->
@@ -12,7 +12,7 @@
                             v-model="currentProfile"
                             :items="profileItems"
                             class="min-w-20"
-                            :disabled="hasChanges"
+                            :disabled="hasEdits"
                             @update:model-value="onProfileChange"
                         />
                     </SettingRow>
@@ -25,7 +25,7 @@
                             v-model="currentRateProfile"
                             :items="rateProfileItems"
                             class="min-w-20"
-                            :disabled="hasChanges"
+                            :disabled="hasEdits"
                             @update:model-value="onRateProfileChange"
                         />
                     </SettingRow>
@@ -79,33 +79,22 @@
             </div>
 
             <!-- Sub-tab Navigation -->
-            <div class="subtab-nav">
-                <UTabs
-                    :items="subtabItems"
-                    :model-value="activeSubtab"
-                    :content="false"
-                    color="primary"
-                    variant="link"
-                    @update:model-value="activeSubtab = $event"
-                />
-            </div>
+            <SubtabNav :items="subtabItems" v-model="activeSubtab" />
 
             <!-- Tab Content -->
             <div class="tabarea">
-                <form name="pid-tuning" id="pid-tuning" @input="onFormChanged" @change="onFormChanged">
+                <form name="pid-tuning" id="pid-tuning">
                     <PidSubTab
                         ref="pidSubTab"
                         v-if="activeSubtab === 'pid'"
                         :expert-mode="expertModeEnabled"
                         :show-all-pids="showAllPids"
-                        @change="onFormChanged"
                     />
-                    <RatesSubTab ref="ratesSubTab" v-if="activeSubtab === 'rates'" @change="onFormChanged" />
+                    <RatesSubTab ref="ratesSubTab" v-if="activeSubtab === 'rates'" />
                     <FilterSubTab
                         ref="filterSubTab"
                         v-if="activeSubtab === 'filter'"
                         :expert-mode="expertModeEnabled"
-                        @change="onFormChanged"
                     />
                 </form>
             </div>
@@ -117,15 +106,23 @@
                     :disabled="!hasChanges"
                     @click="refresh"
                     variant="soft"
+                    size="xs"
                 />
-                <UButton :label="$t('pidTuningButtonSave')" :disabled="!hasChanges" @click="save" />
+                <UButton
+                    :label="$t('pidTuningButtonSave')"
+                    :disabled="!hasChanges"
+                    :loading="isSaving"
+                    @click="save"
+                    size="xs"
+                />
             </div>
         </div>
     </BaseTab>
 </template>
 
-<script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+<script setup lang="ts">
+import { ref, computed, onMounted, watch } from "vue";
+import { useIsMounted } from "@/composables/useIsMounted";
 import { usePidTuningStore } from "@/stores/pidTuning";
 import BaseTab from "./BaseTab.vue";
 import WikiButton from "@/components/elements/WikiButton.vue";
@@ -133,13 +130,10 @@ import PidSubTab from "./pid-tuning/PidSubTab.vue";
 import RatesSubTab from "./pid-tuning/RatesSubTab.vue";
 import FilterSubTab from "./pid-tuning/FilterSubTab.vue";
 import SettingRow from "../elements/SettingRow.vue";
-import GUI from "@/js/gui";
-import MSP from "@/js/msp";
-import MSPCodes from "@/js/msp/MSPCodes";
-import FC from "@/js/fc";
+import SubtabNav from "@/components/elements/SubtabNav.vue";
+import { useFlightControllerStore } from "@/stores/fc";
 import { i18n } from "@/js/localization";
 import { validateTuningSliders } from "@/composables/useTuningSliders";
-import { mspHelper } from "@/js/msp/MSPHelper";
 import semver from "semver";
 import { API_VERSION_1_45, API_VERSION_1_47 } from "@/js/data_storage";
 import { isExpertModeEnabled } from "@/js/utils/isExpertModeEnabled";
@@ -147,27 +141,52 @@ import { useNavigationStore } from "@/stores/navigation";
 import { useDialog } from "@/composables/useDialog";
 import { useTranslation } from "i18next-vue";
 import { gui_log } from "@/js/gui_log";
+import { useSaving } from "@/composables/useSaving";
+import { useReboot } from "@/composables/useReboot";
+import { runTabLoad } from "@/composables/useTabLoad";
+import { CopyProfileType, usePidTuningMsp } from "@/composables/pidTuning/usePidTuningMsp";
+
+/** What CopyProfileDialog confirms with: the selected target profile and/or rate profile. */
+interface CopyProfileSelection {
+    profile: number | null;
+    rateProfile: number | null;
+}
 
 const { t } = useTranslation();
 const pidTuningStore = usePidTuningStore();
 const navigationStore = useNavigationStore();
+const fcStore = useFlightControllerStore();
 const dialog = useDialog();
+const {
+    loadPidTuningData,
+    writePidTuningConfig,
+    selectPidProfile,
+    selectRateProfile,
+    copyProfile: sendCopyProfile,
+    resetPidProfile,
+} = usePidTuningMsp();
 
 // State - use navigation store for expert mode
 const expertModeEnabled = computed(() => navigationStore.expertMode);
 const activeSubtab = ref("pid");
 const showAllPids = ref(false);
-const currentProfile = ref(FC.CONFIG.profile);
+const currentProfile = ref(fcStore.config.profile);
 const currentRateProfile = ref(0);
-const isMounted = ref(false);
-const pidSubTab = ref(null);
-const filterSubTab = ref(null);
+const isMounted = useIsMounted();
+// Guards for the TX-driven profile sync (see watchers below).
+const isLoading = ref(false);
+let syncingFromFc = false;
+const pidSubTab = ref<InstanceType<typeof PidSubTab> | null>(null);
+const filterSubTab = ref<InstanceType<typeof FilterSubTab> | null>(null);
 const ratesSubTab = ref(null);
+
+// Profile count — matches original loadProfilesList() logic
+const numberOfProfiles = computed(() => fcStore.config.numProfiles ?? 3);
 
 // Rate profile count — matches original loadRateProfilesList() logic
 const numberOfRateProfiles = computed(() => {
-    if (semver.gte(FC.CONFIG.apiVersion, API_VERSION_1_47)) {
-        return FC.CONFIG.numberOfRateProfiles ?? 4;
+    if (semver.gte(fcStore.config.apiVersion, API_VERSION_1_47)) {
+        return fcStore.config.numberOfRateProfiles ?? 4;
     }
     return 4;
 });
@@ -175,7 +194,7 @@ const numberOfRateProfiles = computed(() => {
 // Items arrays for USelect / UTabs
 const profileItems = computed(() => {
     const items = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < numberOfProfiles.value; i++) {
         items.push({ label: i18n.getMessage("pidTuningProfileOption", [i + 1]), value: i });
     }
     return items;
@@ -200,10 +219,10 @@ const pidProfileName = ref("");
 const rateProfileName = ref("");
 
 const showProfileName = computed(
-    () => semver.gte(FC.CONFIG.apiVersion, API_VERSION_1_45) && ["pid", "filter"].includes(activeSubtab.value),
+    () => semver.gte(fcStore.config.apiVersion, API_VERSION_1_45) && ["pid", "filter"].includes(activeSubtab.value),
 );
 const showRateProfileName = computed(
-    () => semver.gte(FC.CONFIG.apiVersion, API_VERSION_1_45) && activeSubtab.value === "rates",
+    () => semver.gte(fcStore.config.apiVersion, API_VERSION_1_45) && activeSubtab.value === "rates",
 );
 
 const localProfileName = computed({
@@ -222,110 +241,88 @@ const localRateProfileName = computed({
 
 // hasChanges is owned by the Pinia store
 const hasChanges = computed(() => pidTuningStore.hasChanges);
+// Value edits only: a pending profile switch is unsaved work, but it must not lock the profile
+// selectors — otherwise a switch could only be undone by saving it first.
+const hasEdits = computed(() => pidTuningStore.hasEdits);
 
 // MSP Data Loading
 async function loadData() {
+    isLoading.value = true;
     try {
-        if (!isMounted.value) {
-            return false;
-        }
+        return await runTabLoad(
+            async () => {
+                if (!isMounted.value) {
+                    return false;
+                }
 
-        // Load all PID tuning related MSP data
-        await MSP.promise(MSPCodes.MSP_PIDNAMES);
-        await MSP.promise(MSPCodes.MSP_PID);
-        await MSP.promise(MSPCodes.MSP_PID_ADVANCED);
-        await MSP.promise(MSPCodes.MSP_RC_TUNING);
-        await MSP.promise(MSPCodes.MSP_FILTER_CONFIG);
-        await MSP.promise(MSPCodes.MSP_RC_DEADBAND);
-        await MSP.promise(MSPCodes.MSP_MOTOR_CONFIG);
+                // Load all PID tuning related MSP data
+                await loadPidTuningData();
 
-        // Profile names (API 1.45+)
-        if (semver.gte(FC.CONFIG.apiVersion, API_VERSION_1_45)) {
-            await MSP.promise(
-                MSPCodes.MSP2_GET_TEXT,
-                mspHelper.crunch(MSPCodes.MSP2_GET_TEXT, MSPCodes.PID_PROFILE_NAME),
-            );
-            await MSP.promise(
-                MSPCodes.MSP2_GET_TEXT,
-                mspHelper.crunch(MSPCodes.MSP2_GET_TEXT, MSPCodes.RATE_PROFILE_NAME),
-            );
-        }
+                // Initialize profile names from fcStore.config
+                if (semver.gte(fcStore.config.apiVersion, API_VERSION_1_45)) {
+                    pidProfileName.value = fcStore.config.pidProfileNames?.[fcStore.config.profile] || "";
+                    rateProfileName.value = fcStore.config.rateProfileNames?.[fcStore.config.rateProfile] || "";
+                }
 
-        // Status EX (API 1.47+)
-        if (semver.gte(FC.CONFIG.apiVersion, API_VERSION_1_47)) {
-            await MSP.promise(MSPCodes.MSP_STATUS_EX);
-        }
+                if (!isMounted.value) {
+                    return;
+                }
 
-        await MSP.promise(MSPCodes.MSP_SIMPLIFIED_TUNING);
-        await MSP.promise(MSPCodes.MSP_ADVANCED_CONFIG);
-        await MSP.promise(MSPCodes.MSP_MIXER_CONFIG);
+                // Initialize UI state
+                initializeUI();
 
-        // Initialize profile names from FC.CONFIG
-        if (semver.gte(FC.CONFIG.apiVersion, API_VERSION_1_45)) {
-            pidProfileName.value = FC.CONFIG.pidProfileNames?.[FC.CONFIG.profile] || "";
-            rateProfileName.value = FC.CONFIG.rateProfileNames?.[FC.CONFIG.rateProfile] || "";
-        }
+                // Validate slider positions against FC state (determines whether
+                // sliders are valid and should be enabled).  Must happen before
+                // snapshot so slider-validated values are captured as originals.
+                await validateTuningSliders();
 
-        if (!isMounted.value) {
-            return;
-        }
+                // Force sub-tabs to sync their local slider refs from FC state
+                if (pidSubTab.value?.forceUpdateSliders) {
+                    pidSubTab.value.forceUpdateSliders();
+                }
+                if (filterSubTab.value?.forceUpdateSliders) {
+                    filterSubTab.value.forceUpdateSliders();
+                }
 
-        // Initialize UI state
-        initializeUI();
+                // The loaded values are the clean baseline. The profile baseline is deliberately
+                // left alone: a switch made here is unsaved until it reaches EEPROM.
+                pidTuningStore.markEditsClean();
 
-        // Validate slider positions against FC state (determines whether
-        // sliders are valid and should be enabled).  Must happen before
-        // snapshot so slider-validated values are captured as originals.
-        await validateTuningSliders();
-
-        // Force sub-tabs to sync their local slider refs from FC state
-        if (pidSubTab.value?.forceUpdateSliders) {
-            pidSubTab.value.forceUpdateSliders();
-        }
-        if (filterSubTab.value?.forceUpdateSliders) {
-            filterSubTab.value.forceUpdateSliders();
-        }
-
-        // Store original values for revert
-        storeOriginalValues();
-
-        GUI.content_ready();
-        return true;
-    } catch (e) {
-        console.error("[PidTuning] Failed to load data:", e);
-        GUI.content_ready();
-        return false;
+                return true;
+            },
+            (e) => {
+                console.error("[PidTuning] Failed to load data:", e);
+            },
+        );
+    } finally {
+        isLoading.value = false;
     }
 }
 
 function initializeUI() {
     // Set current profiles
-    currentProfile.value = FC.CONFIG.profile;
-    currentRateProfile.value = FC.CONFIG.rateProfile;
+    currentProfile.value = fcStore.config.profile;
+    currentRateProfile.value = fcStore.config.rateProfile;
     // Get expert mode from global checkbox (in header) and sync to global state
     navigationStore.expertMode = isExpertModeEnabled();
 }
 
-function storeOriginalValues() {
-    pidTuningStore.storeOriginals(pidProfileName.value, rateProfileName.value);
-}
-
 // Profile Management
 async function onProfileChange() {
-    FC.CONFIG.profile = currentProfile.value;
+    fcStore.config.profile = currentProfile.value;
 
     // Select profile via MSP
-    await MSP.promise(MSPCodes.MSP_SELECT_SETTING, [currentProfile.value]);
+    await selectPidProfile(currentProfile.value);
 
     // Reload data
     await loadData();
 }
 
 async function onRateProfileChange() {
-    FC.CONFIG.rateProfile = currentRateProfile.value;
+    fcStore.config.rateProfile = currentRateProfile.value;
 
-    // Select rate profile via MSP (use high bit to indicate rate profile)
-    await MSP.promise(MSPCodes.MSP_SELECT_SETTING, [currentRateProfile.value | 128]);
+    // Select rate profile via MSP
+    await selectRateProfile(currentRateProfile.value);
 
     // Reload data
     await loadData();
@@ -334,7 +331,7 @@ async function onRateProfileChange() {
 async function copyProfile() {
     // Create options for profiles excluding current one
     const options = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < numberOfProfiles.value; i++) {
         if (i !== currentProfile.value) {
             const name = i18n.getMessage("pidTuningProfileOption", [i + 1]);
             options.push({ value: i, label: name });
@@ -352,18 +349,16 @@ async function copyProfile() {
         t("dialogCopyProfileNote"),
         options,
         [],
-        async (selected) => {
+        async (selected: CopyProfileSelection | null) => {
             // selected: { profile, rateProfile }
             if (selected && typeof selected.profile === "number") {
                 const targetProfile = selected.profile;
 
-                FC.COPY_PROFILE = FC.COPY_PROFILE || {};
-                FC.COPY_PROFILE.type = 0; // 0 = PID profile
-                FC.COPY_PROFILE.srcProfile = currentProfile.value;
-                FC.COPY_PROFILE.dstProfile = targetProfile;
-
                 try {
-                    await MSP.promise(MSPCodes.MSP_COPY_PROFILE, mspHelper.crunch(MSPCodes.MSP_COPY_PROFILE));
+                    await sendCopyProfile(CopyProfileType.PID, currentProfile.value, targetProfile);
+                    // The copy landed in the destination profile in RAM only, and nothing on screen
+                    // reflects it — flag it so Save is the way out.
+                    pidTuningStore.markProfileUnsaved();
                     console.log(`[PidTuningTab] Copied profile ${currentProfile.value} to ${targetProfile}`);
                 } catch (error) {
                     console.error("[PidTuningTab] Failed to copy profile:", error);
@@ -397,17 +392,13 @@ async function copyRateProfile() {
         t("dialogCopyProfileNote"),
         [],
         options,
-        async (selected) => {
+        async (selected: CopyProfileSelection | null) => {
             if (selected && typeof selected.rateProfile === "number") {
                 const targetProfile = selected.rateProfile;
 
-                FC.COPY_PROFILE = FC.COPY_PROFILE || {};
-                FC.COPY_PROFILE.type = 1; // 1 = Rate profile
-                FC.COPY_PROFILE.srcProfile = currentRateProfile.value;
-                FC.COPY_PROFILE.dstProfile = targetProfile;
-
                 try {
-                    await MSP.promise(MSPCodes.MSP_COPY_PROFILE, mspHelper.crunch(MSPCodes.MSP_COPY_PROFILE));
+                    await sendCopyProfile(CopyProfileType.RATE, currentRateProfile.value, targetProfile);
+                    pidTuningStore.markProfileUnsaved();
                     console.log(`[PidTuningTab] Copied rate profile ${currentRateProfile.value} to ${targetProfile}`);
                 } catch (error) {
                     console.error("[PidTuningTab] Failed to copy rate profile:", error);
@@ -422,7 +413,11 @@ async function copyRateProfile() {
 
 async function resetProfile() {
     try {
-        await MSP.promise(MSPCodes.MSP_SET_RESET_CURR_PID);
+        await resetPidProfile();
+        // The reset rewrote the profile in RAM only, and the reload below adopts those defaults as
+        // the clean value baseline — so flag the reset itself as work that still needs an EEPROM
+        // write, or it would read as saved the moment the reload lands.
+        pidTuningStore.markProfileUnsaved();
         await loadData();
         gui_log(t("pidTuningPidProfileReset"));
     } catch (error) {
@@ -435,59 +430,40 @@ function toggleShowAllPids() {
 }
 
 // Save/Refresh
-async function save() {
+const { isSaving, runSave } = useSaving();
+const { saveToEeprom } = useReboot();
+
+function save() {
     if (!hasChanges.value) {
         return;
     }
 
-    try {
+    return runSave(async () => {
         // Normalize profile names before saving
         pidProfileName.value = pidProfileName.value.trim();
         rateProfileName.value = rateProfileName.value.trim();
 
-        // Save profile names to FC.CONFIG (API 1.45+)
-        if (FC.CONFIG.pidProfileNames) {
-            FC.CONFIG.pidProfileNames[FC.CONFIG.profile] = pidProfileName.value;
+        // Save profile names to fcStore.config (API 1.45+)
+        if (fcStore.config.pidProfileNames) {
+            fcStore.config.pidProfileNames[fcStore.config.profile] = pidProfileName.value;
         }
-        if (FC.CONFIG.rateProfileNames) {
-            FC.CONFIG.rateProfileNames[FC.CONFIG.rateProfile] = rateProfileName.value;
-        }
-
-        // Save PIDs
-        await MSP.promise(MSPCodes.MSP_SET_PID, mspHelper.crunch(MSPCodes.MSP_SET_PID));
-
-        // Save advanced tuning
-        await MSP.promise(MSPCodes.MSP_SET_PID_ADVANCED, mspHelper.crunch(MSPCodes.MSP_SET_PID_ADVANCED));
-
-        // Save RC tuning
-        await MSP.promise(MSPCodes.MSP_SET_RC_TUNING, mspHelper.crunch(MSPCodes.MSP_SET_RC_TUNING));
-
-        // Save filter config
-        await MSP.promise(MSPCodes.MSP_SET_FILTER_CONFIG, mspHelper.crunch(MSPCodes.MSP_SET_FILTER_CONFIG));
-
-        // Save simplified tuning (sliders)
-        await MSP.promise(MSPCodes.MSP_SET_SIMPLIFIED_TUNING, mspHelper.crunch(MSPCodes.MSP_SET_SIMPLIFIED_TUNING));
-
-        // Save profile names to firmware (API 1.45+)
-        if (semver.gte(FC.CONFIG.apiVersion, API_VERSION_1_45)) {
-            if (FC.CONFIG.pidProfileNames) {
-                await MSP.promise(
-                    MSPCodes.MSP2_SET_TEXT,
-                    mspHelper.crunch(MSPCodes.MSP2_SET_TEXT, MSPCodes.PID_PROFILE_NAME),
-                );
-            }
-            if (FC.CONFIG.rateProfileNames) {
-                await MSP.promise(
-                    MSPCodes.MSP2_SET_TEXT,
-                    mspHelper.crunch(MSPCodes.MSP2_SET_TEXT, MSPCodes.RATE_PROFILE_NAME),
-                );
-            }
+        if (fcStore.config.rateProfileNames) {
+            fcStore.config.rateProfileNames[fcStore.config.rateProfile] = rateProfileName.value;
         }
 
-        // Write to EEPROM
-        await MSP.promise(MSPCodes.MSP_EEPROM_WRITE);
+        // Pin what this save is about to write. The form stays live while the MSP writes are
+        // in flight, and an edit made in that window is not covered by them — baselining on
+        // the post-save state would silently swallow it.
+        const pending = pidTuningStore.takeEditsSnapshot();
 
-        // Re-validate sliders after save
+        // Save PIDs, advanced tuning, rates, filters, sliders, profile names and wing config
+        await writePidTuningConfig();
+
+        // Persist to EEPROM (no reboot)
+        await saveToEeprom();
+
+        // Only after a successful persist: re-validate sliders, refresh the slider
+        // displays and update the dirty baseline.
         await validateTuningSliders();
 
         // Force Vue components to update slider displays
@@ -498,11 +474,11 @@ async function save() {
             filterSubTab.value.forceUpdateSliders();
         }
 
-        // Update original values
-        storeOriginalValues();
-    } catch (e) {
-        console.error("[PidTuning] Save failed:", e);
-    }
+        // Update the baselines against what was actually written. The EEPROM write persisted
+        // the active profile selection, and any reset or copy, along with it.
+        pidTuningStore.markEditsClean(pending);
+        pidTuningStore.markProfileClean();
+    });
 }
 
 async function refresh() {
@@ -515,39 +491,81 @@ async function refresh() {
     }
 }
 
-// Notify the store to re-check for changes.
-// Called by form @input/@change (covers all user-driven edits) and by child
-// @change emits (covers programmatic FC mutations such as slider calculations).
-function onFormChanged() {
-    if (!isMounted.value) {
-        return;
-    }
-    pidTuningStore.checkForChanges(pidProfileName.value, rateProfileName.value);
-}
-
-// Watch profile name changes: sync to FC.CONFIG and re-check for changes
+// Mirror the lifted profile-name inputs into fcStore.config — that is what the save crunches, and
+// what the store compares against its baseline.
 watch(
     () => pidProfileName.value,
     (newValue) => {
-        if (FC.CONFIG.pidProfileNames) {
-            FC.CONFIG.pidProfileNames[FC.CONFIG.profile] = newValue;
+        if (fcStore.config.pidProfileNames) {
+            fcStore.config.pidProfileNames[fcStore.config.profile] = newValue;
         }
-        onFormChanged();
     },
 );
 
 watch(
     () => rateProfileName.value,
     (newValue) => {
-        if (FC.CONFIG.rateProfileNames) {
-            FC.CONFIG.rateProfileNames[FC.CONFIG.rateProfile] = newValue;
+        if (fcStore.config.rateProfileNames) {
+            fcStore.config.rateProfileNames[fcStore.config.rateProfile] = newValue;
         }
-        onFormChanged();
+    },
+);
+
+// Keep the profile / rate-profile selectors in sync with TX-driven changes.
+// The global live-status poller (serial_backend.js) refreshes fcStore.config.profile and
+// fcStore.config.rateProfile via MSP_STATUS_EX every 250ms; an adjustment switch on the TX
+// can therefore change the active profile out from under the UI. Reflect that here and
+// reload — but never clobber unsaved edits or interrupt an in-flight load. Restores the
+// checkUpdateProfile() behaviour lost in the Vue migration (issue #5230).
+async function syncProfileFromFc(kind: "profile" | "rate") {
+    // Skip while loading, while our own change is applying, or when values have been edited
+    // (an in-progress edit takes precedence over a switch flip, matching legacy behaviour).
+    // A pending profile switch must not block this, or the selector would stay stuck on the
+    // old profile after a TX flip.
+    if (!isMounted.value || isLoading.value || syncingFromFc || pidTuningStore.hasEdits) {
+        return;
+    }
+
+    syncingFromFc = true;
+    try {
+        currentProfile.value = fcStore.config.profile;
+        currentRateProfile.value = fcStore.config.rateProfile;
+        // Only announce (and adopt) the profile once the reload actually succeeded. The FC picked
+        // this profile itself, so the tab is mirroring it rather than holding a pending switch —
+        // but a pending reset or copy is untouched by that, and stays unsaved.
+        if (await loadData()) {
+            pidTuningStore.markProfileSelectionClean();
+            gui_log(
+                i18n.getMessage(kind === "rate" ? "pidTuningReceivedRateProfile" : "pidTuningReceivedProfile", [
+                    (kind === "rate" ? fcStore.config.rateProfile : fcStore.config.profile) + 1,
+                ]),
+            );
+        }
+    } finally {
+        syncingFromFc = false;
+    }
+}
+
+watch(
+    () => fcStore.config.profile,
+    (newValue) => {
+        if (newValue !== currentProfile.value) {
+            syncProfileFromFc("profile");
+        }
+    },
+);
+
+watch(
+    () => fcStore.config.rateProfile,
+    (newValue) => {
+        if (newValue !== currentRateProfile.value) {
+            syncProfileFromFc("rate");
+        }
     },
 );
 
 // Cleanup callback - called from gui.js tab_switch_cleanup when switching away from this tab
-function cleanup(callback) {
+function cleanup(callback?: () => void) {
     // Any cleanup needed before unmounting
     // Call the callback to signal cleanup is complete
     if (callback) {
@@ -555,17 +573,21 @@ function cleanup(callback) {
     }
 }
 
-defineExpose({ cleanup });
+function selectSubtab(subtab: string) {
+    if (subtabItems.value.some((item) => item.value === subtab)) {
+        activeSubtab.value = subtab;
+    }
+}
+
+defineExpose({ cleanup, selectSubtab });
 
 // Lifecycle
 onMounted(async () => {
-    isMounted.value = true;
-
-    await loadData();
-});
-
-onUnmounted(() => {
-    isMounted.value = false;
+    // Baseline the profile selection on the profile the FC is running when the tab opens, so only
+    // a switch made from here counts as unsaved. A failed load leaves it untracked.
+    if (await loadData()) {
+        pidTuningStore.markProfileClean();
+    }
 });
 </script>
 
@@ -578,7 +600,7 @@ onUnmounted(() => {
 
 /* ── Table base ───────────────────────────────────────────────────── */
 .tab-pid_tuning table {
-    float: left;
+    float: inline-start;
     margin: 0;
     border-collapse: collapse;
     width: 100%;
@@ -590,27 +612,27 @@ onUnmounted(() => {
     background-color: var(--surface-400);
 }
 .tab-pid_tuning .cf th {
-    border-right: solid 1px var(--surface-500);
+    border-inline-end: solid 1px var(--surface-500);
     height: 19px;
     font-weight: normal;
     padding: 4px;
     color: var(--text);
-    text-align: left;
+    text-align: start;
     background: var(--surface-300);
 }
 .tab-pid_tuning .cf th:first-child {
-    border-top-left-radius: 3px;
+    border-start-start-radius: 3px;
 }
 .tab-pid_tuning .cf th:last-child {
-    border-right: 0;
-    border-top-right-radius: 3px;
+    border-inline-end: 0;
+    border-start-end-radius: 3px;
 }
 .tab-pid_tuning .cf td:first-child {
-    border-bottom-left-radius: 3px;
+    border-end-start-radius: 3px;
 }
 .tab-pid_tuning .cf td:last-child {
-    border-bottom-right-radius: 3px;
-    border-right: 0;
+    border-end-end-radius: 3px;
+    border-inline-end: 0;
     padding-bottom: 0;
 }
 .tab-pid_tuning .cf input {
@@ -629,14 +651,14 @@ onUnmounted(() => {
 }
 /* ── Curves & canvas ──────────────────────────────────────────────── */
 .tab-pid_tuning .throttle_curve {
-    float: right;
+    float: inline-end;
     width: 100%;
     background-size: 200%;
     height: 164px;
 }
 .tab-pid_tuning .curves {
-    float: left;
-    margin-right: 10px;
+    float: inline-start;
+    margin-inline-end: 10px;
 }
 .tab-pid_tuning .rate_curve {
     height: 362px;
@@ -649,7 +671,7 @@ onUnmounted(() => {
 .tab-pid_tuning table td {
     border-bottom: 0 solid var(--surface-500);
     padding: 0.5rem;
-    border-right: 1px solid var(--surface-500);
+    border-inline-end: 1px solid var(--surface-500);
 }
 .tab-pid_tuning table th {
     padding: 0;
@@ -660,11 +682,11 @@ onUnmounted(() => {
     color: var(--text);
 }
 .tab-pid_tuning table tr td:first-child {
-    text-align: left;
+    text-align: start;
 }
 .tab-pid_tuning table tr td:last-child {
-    border-right: 0 solid var(--surface-500);
-    text-align: left;
+    border-inline-end: 0 solid var(--surface-500);
+    text-align: start;
 }
 .tab-pid_tuning table .groupSwitchValue {
     display: inline-flex;
@@ -706,26 +728,26 @@ onUnmounted(() => {
 
 /* ── PID titlebar ─────────────────────────────────────────────────── */
 .tab-pid_tuning .pid_titlebar {
-    color: #fff;
+    color: white;
     background-color: var(--surface-300);
-    border-top-left-radius: 3px;
-    border-top-right-radius: 3px;
+    border-start-start-radius: 3px;
+    border-start-end-radius: 3px;
 }
 .tab-pid_tuning .pid_titlebar th {
     padding: 0.5rem;
     text-align: center;
-    border-right: 1px solid var(--surface-500);
+    border-inline-end: 1px solid var(--surface-500);
 }
 .tab-pid_tuning .pid_titlebar th:first-child {
-    text-align: left;
-    border-top-left-radius: 3px;
+    text-align: start;
+    border-start-start-radius: 3px;
 }
 .tab-pid_tuning .pid_titlebar th:last-child {
-    border-right: none;
-    border-top-right-radius: 3px;
+    border-inline-end: none;
+    border-start-end-radius: 3px;
 }
 .tab-pid_tuning .pid_titlebar td:first-child {
-    text-align: left;
+    text-align: start;
 }
 .tab-pid_tuning .pid_titlebar .name-helpicon-flex {
     display: flex;
@@ -733,7 +755,7 @@ onUnmounted(() => {
     justify-content: space-around;
 }
 .tab-pid_tuning .pid_titlebar .name-helpicon-flex .helpicon {
-    margin-right: 0;
+    margin-inline-end: 0;
 }
 
 /* ── Optional / accel PID sections ────────────────────────────────── */
@@ -769,11 +791,11 @@ onUnmounted(() => {
     width: 100%;
 }
 .tab-pid_tuning table.compensation .helpicon {
-    margin-left: auto;
-    margin-right: 0;
+    margin-inline-start: auto;
+    margin-inline-end: 0;
 }
 .tab-pid_tuning table.compensation .suboption {
-    margin-left: 2%;
+    margin-inline-start: 2%;
     display: flex;
     flex-flow: row wrap-reverse;
     align-items: center;
@@ -790,7 +812,7 @@ onUnmounted(() => {
     box-sizing: border-box;
 }
 .tab-pid_tuning table.compensation .suboption label {
-    margin-left: 5px;
+    margin-inline-start: 5px;
 }
 .tab-pid_tuning table.filterTable.compensation td:first-child {
     width: 5%;
@@ -828,11 +850,11 @@ onUnmounted(() => {
     text-align: center;
 }
 .tab-pid_tuning .new_rates td:first-child {
-    border-bottom-left-radius: 0;
-    padding-left: 10px;
+    border-end-start-radius: 0;
+    padding-inline-start: 10px;
 }
 .tab-pid_tuning .new_rates td:last-child span {
-    margin-right: auto;
+    margin-inline-end: auto;
 }
 
 /* ── Misc helpers ─────────────────────────────────────────────────── */
@@ -852,15 +874,15 @@ onUnmounted(() => {
 }
 .tab-pid_tuning .number .helpicon {
     margin-top: 3px;
-    margin-right: 0;
+    margin-inline-end: 0;
 }
 .tab-pid_tuning .number {
     margin-bottom: 5px;
-    clear: left;
+    clear: inline-start;
     padding-bottom: 5px;
     border-bottom: 1px solid var(--surface-500);
     width: 100%;
-    float: left;
+    float: inline-start;
 }
 .tab-pid_tuning .number:last-child {
     padding-bottom: 5px;
@@ -874,36 +896,36 @@ onUnmounted(() => {
     font-weight: normal;
 }
 .tab-pid_tuning .spacer_left {
-    padding-left: 0;
-    float: right;
+    padding-inline-start: 0;
+    float: inline-end;
     width: calc(100% - 20px);
 }
 .tab-pid_tuning .numberspacer {
-    float: left;
+    float: inline-start;
     width: 65px;
     height: 21px;
 }
 .tab-pid_tuning .right {
-    float: right;
+    float: inline-end;
 }
 .tab-pid_tuning .pids {
-    float: left;
+    float: inline-start;
     width: 25%;
 }
 .tab-pid_tuning .roll {
-    border-bottom-left-radius: 3px;
+    border-end-start-radius: 3px;
 }
 .tab-pid_tuning .pidTuningLevel {
-    float: left;
+    float: inline-start;
 }
 .tab-pid_tuning .borderleft {
-    border-top-left-radius: 3px;
-    border-top-right-radius: 3px;
+    border-start-start-radius: 3px;
+    border-start-end-radius: 3px;
 }
 .tab-pid_tuning .textleft {
     width: 25%;
-    float: left;
-    text-align: left;
+    float: inline-start;
+    text-align: start;
 }
 .tab-pid_tuning .topspacer {
     margin-top: 5px;
@@ -916,7 +938,7 @@ onUnmounted(() => {
     height: 35px;
     width: 14px;
     margin-top: -23px;
-    margin-left: 8px;
+    margin-inline-start: 8px;
 }
 
 /* ── Rates preview ────────────────────────────────────────────────── */
@@ -928,8 +950,8 @@ onUnmounted(() => {
 .tab-pid_tuning .rates_preview {
     position: absolute;
     top: 0;
-    left: 0;
-    right: 0;
+    inset-inline-start: 0;
+    inset-inline-end: 0;
     bottom: 0;
     background-size: 100%;
 }
@@ -958,13 +980,13 @@ onUnmounted(() => {
     padding: 0;
 }
 .tab-pid_tuning .rc_curve_bg {
-    float: left;
+    float: inline-start;
 }
 .tab-pid_tuning .new_rates_last-child {
     border-bottom: none;
 }
 .tab-pid_tuning .filter {
-    padding-left: 5px;
+    padding-inline-start: 5px;
 }
 
 /* ── Dialog ───────────────────────────────────────────────────────── */
@@ -981,7 +1003,7 @@ onUnmounted(() => {
 }
 .tab-pid_tuning dialog select {
     border: 1px solid var(--surface-500);
-    margin-left: 5px;
+    margin-inline-start: 5px;
     width: 120px;
 }
 
@@ -1013,7 +1035,7 @@ onUnmounted(() => {
     width: 23px;
     height: 23px;
     border-radius: 50%;
-    background: #ffbb2a;
+    background: var(--primary-500);
     border: solid 1px var(--surface-300);
     cursor: pointer;
     position: relative;
@@ -1051,7 +1073,7 @@ onUnmounted(() => {
     border-bottom: none;
 }
 .tab-pid_tuning .sliderLabels tr td:first-child {
-    text-align: right;
+    text-align: end;
     width: 20%;
 }
 .tab-pid_tuning .sliderLabels tr td:nth-child(2) {
@@ -1072,7 +1094,7 @@ onUnmounted(() => {
 }
 .tab-pid_tuning .tuningPIDSliders .pid_titlebar th:first-child {
     width: 20%;
-    text-align: left;
+    text-align: start;
 }
 .tab-pid_tuning .tuningPIDSliders .pid_titlebar th:first-child div {
     display: inline-block;
@@ -1090,7 +1112,7 @@ onUnmounted(() => {
 }
 .tab-pid_tuning .tuningFilterSliders .pid_titlebar th:first-child {
     width: 10%;
-    border-right: none;
+    border-inline-end: none;
 }
 .tab-pid_tuning .tuningFilterSliders .pid_titlebar th:nth-child(2) {
     width: 30px;
@@ -1110,13 +1132,13 @@ onUnmounted(() => {
     margin: 0;
 }
 .tab-pid_tuning .note-button td:nth-child(n) {
-    padding-left: 7px;
-    padding-right: 7px;
+    padding-inline-start: 7px;
+    padding-inline-end: 7px;
     text-align: center;
 }
 .tab-pid_tuning .note-button td:first-child {
     width: 75%;
-    border-right: none;
+    border-inline-end: none;
 }
 .tab-pid_tuning .note-button .regular-button {
     display: block;
@@ -1149,7 +1171,7 @@ onUnmounted(() => {
 }
 .tab-pid_tuning .subtab-pid .cf_column_right {
     min-width: 300px;
-    margin-left: 15px;
+    margin-inline-start: 15px;
     flex: 1;
 }
 .tab-pid_tuning .subtab-pid .note {
@@ -1163,7 +1185,7 @@ onUnmounted(() => {
 
 /* ── Rates logo ───────────────────────────────────────────────────── */
 .tab-pid_tuning .cf .rates_logo_bg {
-    background-color: #ebeced;
+    background-color: var(--surface-300);
 }
 .tab-pid_tuning .rates_logo_div {
     margin-top: -10%;
@@ -1174,16 +1196,16 @@ onUnmounted(() => {
     height: 80%;
 }
 .tab-pid_tuning .float-left {
-    float: left;
+    float: inline-start;
 }
 
 /* ── Fancy header (not under .tab-pid_tuning) ─────────────────────── */
 .fancy.header {
-    background-color: #d6d6d6;
+    background-color: var(--surface-400);
     padding-top: 8px;
     font-size: 12px;
     border-bottom: 1px solid var(--surface-500);
-    color: #595959;
+    color: var(--surface-900);
     background-image: linear-gradient(
         315deg,
         rgba(255, 255, 255, 0.2) 10%,
@@ -1212,14 +1234,14 @@ onUnmounted(() => {
 .fancy.header th {
     padding-bottom: 4px;
     padding-top: 4px;
-    padding-left: 5px;
+    padding-inline-start: 5px;
 }
 
 /* ── pid_mode (not under .tab-pid_tuning) ─────────────────────────── */
 .pid_mode {
     background-color: var(--surface-400);
     margin: 0;
-    text-align: left;
+    text-align: start;
     padding: 0.25rem 0.5rem;
     font-size: 12px;
     border-bottom: 1px solid var(--surface-500);
@@ -1255,13 +1277,13 @@ onUnmounted(() => {
 
 /* ── PID row colors (not under .tab-pid_tuning) ──────────────────── */
 .pid_roll {
-    background-color: #e24761;
+    background-color: var(--color-axis-roll);
 }
 .pid_pitch {
-    background-color: #97d800;
+    background-color: var(--color-axis-pitch);
 }
 .pid_yaw {
-    background-color: #1fb1f0;
+    background-color: var(--color-axis-yaw);
 }
 .pid_roll,
 .pid_pitch,
@@ -1271,26 +1293,20 @@ onUnmounted(() => {
 
 /* ── Filter two-columns ───────────────────────────────────────────── */
 .subtab-filter table tr td:first-child {
-    text-align: right;
-    padding-left: 5px;
+    text-align: end;
+    padding-inline-start: 5px;
     width: 1%;
 }
 .subtab-filter .two_columns {
     display: flex;
 }
 .subtab-filter .two_columns .two_columns_first {
-    margin-right: 10px;
+    margin-inline-end: 10px;
     height: fit-content;
 }
 .subtab-filter .two_columns .two_columns_second {
-    margin-left: 10px;
+    margin-inline-start: 10px;
     height: fit-content;
-}
-
-/* ── Sub-tab navigation ───────────────────────────────────────────── */
-.subtab-nav {
-    width: calc(100% - 22px);
-    margin-bottom: 6px;
 }
 
 /* ── Tab area ─────────────────────────────────────────────────────── */
@@ -1299,8 +1315,8 @@ onUnmounted(() => {
     position: relative;
     padding: 10px;
     border: 1px solid var(--surface-500);
-    border-bottom-right-radius: 8px;
-    border-bottom-left-radius: 8px;
+    border-end-end-radius: 8px;
+    border-end-start-radius: 8px;
     border-top: 0 solid var(--surface-500);
     background: transparent;
 }
@@ -1317,7 +1333,7 @@ onUnmounted(() => {
     }
     .tab-pid_tuning .subtab-pid .cf_column_right {
         min-width: 100%;
-        margin-left: 0;
+        margin-inline-start: 0;
     }
     .tab-pid_tuning .subtab-rates .cf_column {
         min-width: 100%;
@@ -1331,11 +1347,11 @@ onUnmounted(() => {
     }
     .tab-pid_tuning .sliderHeaders {
         height: 18px;
-        background-color: #d6d6d6;
+        background-color: var(--surface-400);
         line-height: 13px;
         font-size: 12px;
         border-bottom: 1px solid var(--surface-500);
-        color: #595959;
+        color: var(--surface-900);
         font-weight: normal;
         background-image: linear-gradient(
             315deg,
@@ -1363,10 +1379,10 @@ onUnmounted(() => {
         );
     }
     .tab-pid_tuning .sliderHeaders span {
-        color: #595959;
+        color: var(--surface-900);
     }
     .tab-pid_tuning .sliderLabels tr.sliderHeaders td:first-child {
-        text-align: left;
+        text-align: start;
     }
     .tab-pid_tuning .tuningPIDSliders .pid_titlebar th:last-child,
     .tab-pid_tuning .tuningPIDSliders .pid_titlebar th:nth-child(2) {
@@ -1385,10 +1401,10 @@ onUnmounted(() => {
         flex-wrap: wrap;
     }
     .subtab-filter .two_columns .two_columns_first {
-        margin-right: 0;
+        margin-inline-end: 0;
     }
     .subtab-filter .two_columns .two_columns_second {
-        margin-left: 0;
+        margin-inline-start: 0;
     }
 }
 

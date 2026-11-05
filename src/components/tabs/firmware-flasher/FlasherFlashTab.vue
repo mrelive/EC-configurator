@@ -1,5 +1,5 @@
 <template>
-    <UiBox class="release_info col-span-1 mt-4">
+    <UiBox class="flasher-flash-tab release_info col-span-1 mt-4">
         <div class="release_info_grid">
             <!-- Target Row -->
             <div class="info_row">
@@ -43,14 +43,27 @@
             <!-- Date Row -->
             <div class="info_row">
                 <strong>{{ $t("firmwareFlasherReleaseDate") }}</strong>
-                <span class="date">{{ state.releaseDateText }}</span>
+                <span class="date">{{ cloudBuild.state.cloudBuildCommitDate || state.releaseDateText }}</span>
+                <div></div>
+            </div>
+
+            <!-- Commit Row -->
+            <div v-if="cloudBuild.state.cloudBuildCommitHash" class="info_row">
+                <strong>{{ $t("firmwareFlasherReleaseCommit") }}</strong>
+                <a
+                    class="commit"
+                    :href="`https://github.com/betaflight/betaflight/commit/${cloudBuild.state.cloudBuildCommitHash}`"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >{{ cloudBuild.state.cloudBuildCommitHash }}</a
+                >
                 <div></div>
             </div>
 
             <!-- Configuration File Row -->
-            <div class="info_row">
+            <div v-if="configFilenameVisible" class="info_row">
                 <strong>{{ $t("firmwareFlasherConfigurationFile") }}</strong>
-                <span class="configFilename">{{ state.configFilenameText }}</span>
+                <span class="configFilename">{{ state.isConfigLocal ? state.configFilename : "[default]" }}</span>
                 <div></div>
             </div>
 
@@ -120,7 +133,19 @@
                         </span>
                     </div>
                 </div>
-                <div></div>
+                <div>
+                    <UButton
+                        v-if="showRestoreButton"
+                        size="xs"
+                        color="success"
+                        icon="i-lucide-upload"
+                        :loading="restoreInProgress"
+                        @click="onRestoreBackup"
+                        :disabled="restoreInProgress"
+                    >
+                        {{ $t("firmwareFlasherRestoreBackup") }}
+                    </UButton>
+                </div>
             </div>
 
             <!-- Firmware Loaded Rows (online only) -->
@@ -134,7 +159,7 @@
         </div>
     </UiBox>
 
-    <div class="flash-extras mt-4">
+    <div class="flasher-flash-tab flash-extras mt-4">
         <!-- Warning and Recovery panes -->
         <div class="grid-box col2 mt-2">
             <UiBox :title="$t('warningTitle')" type="error" highlight class="note-text-format">
@@ -146,7 +171,13 @@
                     >{{ $t("firmwareFlasherReadMore") }}</a
                 >
             </UiBox>
-            <UiBox :title="$t('firmwareFlasherRecoveryHead')" highlight class="note-text-format">
+            <UiBox
+                :title="$t('firmwareFlasherRecoveryHead')"
+                type="neutral"
+                highlight
+                collapsible
+                class="note-text-format"
+            >
                 <p>{{ $t("firmwareFlasherRecoveryShort") }}</p>
                 <a
                     href="https://betaflight.com/docs/wiki/app/firmware-flasher-tab#troubleshooting"
@@ -162,26 +193,27 @@
             v-if="state.expertOptionsVisible"
             :title="$t('firmwareFlasherAdvancedTitle')"
             type="neutral"
+            collapsible
             class="mt-2"
         >
             <SettingRow
                 :label="$t('firmwareFlasherNoReboot')"
                 :help="$t('firmwareFlasherNoRebootDescription')"
-                full-width
+                fullWidth
             >
                 <USwitch v-model="state.noRebootSequence" @change="onNoRebootChange" />
             </SettingRow>
             <SettingRow
                 :label="$t('firmwareFlasherFullChipErase')"
                 :help="$t('firmwareFlasherFullChipEraseDescription')"
-                full-width
+                fullWidth
             >
                 <USwitch v-model="state.eraseChip" @change="onEraseChipChange" />
             </SettingRow>
             <SettingRow
                 :label="$t('firmwareFlasherManualBaud')"
                 :help="$t('firmwareFlasherManualBaudDescription')"
-                full-width
+                fullWidth
             >
                 <USwitch v-model="state.flashManualBaud" @change="onFlashManualBaudChange" />
                 <USelect
@@ -194,50 +226,81 @@
                         { value: 115200, label: '115200' },
                         { value: 57600, label: '57600' },
                     ]"
+                    size="xs"
                     class="min-w-24"
                     @update:model-value="onFlashManualBaudRateChange"
+                />
+            </SettingRow>
+            <SettingRow :label="$t('firmwareBackupOnFlash')">
+                <USelect
+                    :items="[
+                        { label: $t('firmwareBackupDisabled'), value: 0 },
+                        { label: $t('firmwareBackupEnabled'), value: 1 },
+                        { label: $t('firmwareBackupAsk'), value: 2 },
+                    ]"
+                    size="xs"
+                    v-model="backupOnFlash"
+                    class="min-w-40"
+                    :ui="{ content: 'z-3002' }"
                 />
             </SettingRow>
         </UiBox>
     </div>
 </template>
 
-<script setup>
-import { computed } from "vue";
+<script setup lang="ts">
+import { computed, ref, watch, type PropType } from "vue";
 import UiBox from "@/components/elements/UiBox.vue";
 import SettingRow from "@/components/elements/SettingRow.vue";
 import ProgressRing from "@/components/ProgressRing.vue";
+import { get as getConfig, set as setConfig } from "@/js/ConfigStorage";
+import { getLastBackupData } from "@/js/utils/AutoBackup";
+import type { useCloudBuild } from "@/composables/useCloudBuild";
+import { injectBoardSelection, injectFlasherState } from "./flasherState";
 
 const props = defineProps({
-    state: { type: Object, required: true },
-    cloudBuild: { type: Object, required: true },
-    onSaveFirmware: { type: Function, required: true },
+    cloudBuild: { type: Object as PropType<ReturnType<typeof useCloudBuild>>, required: true },
+    onSaveFirmware: { type: Function as PropType<() => void>, required: true },
     flashRingColor: { type: String, required: true },
-    onNoRebootChange: { type: Function, required: true },
-    onEraseChipChange: { type: Function, required: true },
-    onFlashManualBaudChange: { type: Function, required: true },
-    onFlashManualBaudRateChange: { type: Function, required: true },
+    onNoRebootChange: { type: Function as PropType<() => void>, required: true },
+    onEraseChipChange: { type: Function as PropType<() => void>, required: true },
+    onFlashManualBaudChange: { type: Function as PropType<() => void>, required: true },
+    onFlashManualBaudRateChange: { type: Function as PropType<() => void>, required: true },
+    onRestoreBackup: { type: Function as PropType<() => void>, required: true },
+    firmwareAcceptsConfig: { type: Boolean, required: true },
+});
+
+const state = injectFlasherState();
+const boardSelection = injectBoardSelection();
+
+const configFilenameVisible = computed(() => {
+    if (state.isConfigLocal) {
+        return true;
+    }
+    if (state.localFirmwareLoaded) {
+        return props.firmwareAcceptsConfig && typeof state.config === "string" && state.config !== "";
+    }
+    const { firmwareVersionOptions, selectedFirmwareVersion } = boardSelection.state;
+    return firmwareVersionOptions.find((option) => option.release === selectedFirmwareVersion)?.unifiedConfig === true;
 });
 
 // True while flash is actively running (progress updates flowing)
-const flashStatusLive = computed(() => props.state.flashingInProgress || props.state.flashProgressValue > 0);
+const flashStatusLive = computed(() => state.flashingInProgress || state.flashProgressValue > 0);
 
 // Show row if live OR if a saved result exists
-const flashStatusVisible = computed(() => flashStatusLive.value || !!props.state.lastFlashResultText);
+const flashStatusVisible = computed(() => flashStatusLive.value || !!state.lastFlashResultText);
 
 // Text: live progress text during flash, saved result after
-const flashStatusText = computed(() =>
-    flashStatusLive.value ? props.state.progressLabelText : props.state.lastFlashResultText,
-);
+const flashStatusText = computed(() => (flashStatusLive.value ? state.progressLabelText : state.lastFlashResultText));
 
 // Class: live class during flash, saved result class after
 const flashStatusClass = computed(() =>
-    flashStatusLive.value ? props.state.progressLabelClass : props.state.lastFlashResultClass,
+    flashStatusLive.value ? state.progressLabelClass : state.lastFlashResultClass,
 );
 
 // Ring color for saved result (mirrors flashRingColor logic)
 const flashResultRingColor = computed(() => {
-    switch (props.state.lastFlashResultClass) {
+    switch (state.lastFlashResultClass) {
         case "invalid":
         case "erasing":
             return "error";
@@ -250,58 +313,88 @@ const flashResultRingColor = computed(() => {
             return "primary";
     }
 });
+
+// backupOnFlash preference — read from ConfigStorage on mount, persisted via watch
+const backupOnFlash = ref(getConfig("backupOnFlash", 1).backupOnFlash ?? 1);
+watch(
+    () => backupOnFlash.value,
+    (v) => setConfig({ backupOnFlash: v }),
+);
+
+// Restore progress busy flag (driven by the parent via shared state)
+const restoreInProgress = computed(() => state.restoreInProgress);
+
+// Show restore button only when flash succeeded, not flashing, restore not already
+// done, and backup data exists.
+// Note: No longer checking DeviceHandler.portAvailable as it's stale after flash
+const showRestoreButton = computed(() => {
+    if (state.flashingInProgress) {
+        return false;
+    }
+    if (state.lastFlashResultClass !== "valid" || !state.lastFlashResultText) {
+        return false;
+    }
+    if (state.restoreInProgress || state.restoreCompleted) {
+        return false;
+    }
+    // Only show if we have a backup available (checking for null or empty string)
+    const backupData = getLastBackupData();
+    return backupData !== null && backupData !== "";
+});
 </script>
 
-<style scoped>
-.release_info_grid {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 0.5rem 1rem;
-    align-items: center;
-}
+<style lang="less">
+.flasher-flash-tab {
+    .release_info_grid {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 0.5rem 1rem;
+        align-items: center;
+    }
 
-.release_info_grid .info_row {
-    display: contents;
-}
+    .release_info_grid .info_row {
+        display: contents;
+    }
 
-.release_info_grid strong {
-    text-align: right;
-    white-space: nowrap;
-}
+    .release_info_grid :where(.info_row) > strong {
+        text-align: end;
+        white-space: nowrap;
+    }
 
-.release_info_grid span,
-.release_info_grid a {
-    text-align: left;
-}
+    .release_info_grid :where(.info_row, .status_text) > span,
+    .release_info_grid :where(.info_row, .board_support) > a {
+        text-align: start;
+    }
 
-.release_info_grid .board_support {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-    justify-self: start;
-}
+    .release_info_grid .board_support {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        justify-self: start;
+    }
 
-.status_ring_wrapper {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-}
+    .status_ring_wrapper {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
 
-.status_text {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    font-size: 0.85rem;
-}
+    .status_text {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        font-size: 0.85rem;
+    }
 
-.flash-status-error-text {
-    color: var(--error-500);
-    font-weight: 600;
-}
+    .flash-status-error-text {
+        color: var(--error-500);
+        font-weight: 600;
+    }
 
-.flash-extras {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
+    &.flash-extras {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
 }
 </style>

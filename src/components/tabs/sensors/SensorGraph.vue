@@ -3,14 +3,17 @@
         <!-- Normal sensor layout -->
         <UiBox v-if="!isDebug">
             <div class="grid grid-cols-[1fr_10rem] gap-4 w-full">
-                <svg :id="svgId" ref="svgElement" class="w-full h-full">
-                    <g class="grid x" transform="translate(40, 120)"></g>
+                <!-- The `x` groups are positioned on the plot baseline by
+                     useSensorGraph's applyGraphTransforms — their offset depends on the
+                     measured height, so it must not be hardcoded here. -->
+                <svg :id="svgId" ref="svgElement" class="sensor-graph w-full h-full">
+                    <g class="grid x"></g>
                     <g class="grid y" transform="translate(40, 10)"></g>
-                    <g class="data" transform="translate(41, 10)"></g>
-                    <g class="axis x" transform="translate(40, 120)"></g>
+                    <g class="data" transform="translate(40, 10)"></g>
+                    <g class="axis x"></g>
                     <g class="axis y" transform="translate(40, 10)"></g>
                 </svg>
-                <div class="text-[10px] flex flex-col gap-1 [&_button]:!text-[10px] [&_[data-slot=base]]:!text-[10px]">
+                <div class="text-[10px] flex flex-col gap-1 [&_button]:text-[10px]! [&_[data-slot=base]]:text-[10px]!">
                     <div class="font-bold mb-2 flex items-center gap-1">
                         <span v-html="title"></span>
                         <HelpIcon v-if="hint" :text="hint" />
@@ -28,7 +31,7 @@
                     <div v-if="scaleOptions" class="flex items-center gap-2">
                         <span class="flex-1" v-html="$t('sensorsScale')"></span>
                         <USelect
-                            :model-value="scale"
+                            :model-value="scale ?? undefined"
                             :items="scaleItems"
                             @update:model-value="$emit('update:scale', Number($event))"
                             class="min-w-24"
@@ -41,9 +44,9 @@
                             <span
                                 class="w-24 text-right px-[3px] py-[2px] text-black rounded-[3px]"
                                 :class="{
-                                    'bg-[#1fb1f0]': axis === 'x',
-                                    'bg-[#97d800]': axis === 'y',
-                                    'bg-[#e24761]': axis === 'z',
+                                    'bg-axis-roll': axis === 'x',
+                                    'bg-axis-pitch': axis === 'y',
+                                    'bg-axis-yaw': axis === 'z',
                                 }"
                                 >{{ displayValues[i] }}</span
                             >
@@ -52,7 +55,7 @@
                     <template v-else>
                         <div class="flex justify-between py-0.5">
                             <span>X:</span>
-                            <span class="w-24 text-right px-[3px] py-[2px] text-black rounded-[3px] bg-[#1fb1f0]">{{
+                            <span class="w-24 text-right px-[3px] py-[2px] text-black rounded-[3px] bg-axis-roll">{{
                                 displayValues[0]
                             }}</span>
                         </div>
@@ -63,14 +66,14 @@
         <!-- Debug layout (own UiBox, same graph-grid as normal sensors) -->
         <UiBox v-else>
             <div class="grid grid-cols-[1fr_10rem] gap-4 w-full">
-                <svg :id="svgId" ref="svgElement" class="w-full h-[140px]">
-                    <g class="grid x" transform="translate(40, 120)"></g>
+                <svg :id="svgId" ref="svgElement" class="sensor-graph w-full h-[140px]">
+                    <g class="grid x"></g>
                     <g class="grid y" transform="translate(40, 10)"></g>
-                    <g class="data" transform="translate(41, 10)"></g>
-                    <g class="axis x" transform="translate(40, 120)"></g>
+                    <g class="data" transform="translate(40, 10)"></g>
+                    <g class="axis x"></g>
                     <g class="axis y" transform="translate(40, 10)"></g>
                 </svg>
-                <div class="text-[10px] flex flex-col gap-1 [&_button]:!text-[10px] [&_[data-slot=base]]:!text-[10px]">
+                <div class="text-[10px] flex flex-col gap-1 [&_button]:text-[10px]! [&_[data-slot=base]]:text-[10px]!">
                     <div class="font-bold mb-2"><span v-html="title"></span></div>
                     <div v-if="showRefreshRate" class="flex items-center gap-2">
                         <span class="flex-1" v-html="$t('sensorsRefresh')"></span>
@@ -82,9 +85,19 @@
                             size="xs"
                         />
                     </div>
+                    <div v-if="scaleOptions" class="flex items-center gap-2">
+                        <span class="flex-1" v-html="$t('sensorsScale')"></span>
+                        <USelect
+                            :model-value="scale ?? undefined"
+                            :items="scaleItems"
+                            @update:model-value="$emit('update:scale', Number($event))"
+                            class="min-w-24"
+                            size="xs"
+                        />
+                    </div>
                     <div class="flex justify-between py-0.5">
                         <span>Value:</span>
-                        <span class="w-24 text-right px-[3px] py-[2px] text-black rounded-[3px] bg-[#1fb1f0]">{{
+                        <span class="w-24 text-right px-[3px] py-[2px] text-black rounded-[3px] bg-axis-roll">{{
                             displayValues[0]
                         }}</span>
                     </div>
@@ -94,9 +107,11 @@
     </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed } from "vue";
-import { REFRESH_RATE_OPTIONS } from "./constants";
+import type { PropType } from "vue";
+import { DEBUG_SCALE_AUTO, REFRESH_RATE_OPTIONS } from "./constants";
+import { i18n } from "@/js/localization";
 import UiBox from "@/components/elements/UiBox.vue";
 import HelpIcon from "@/components/elements/HelpIcon.vue";
 
@@ -107,18 +122,24 @@ const props = defineProps({
     svgId: { type: String, required: true },
     visible: { type: Boolean, default: true },
     title: { type: String, required: true },
-    hint: { type: String, default: null },
+    hint: { type: String as PropType<string | null>, default: null },
     showRefreshRate: { type: Boolean, default: true },
     rate: { type: Number, default: 50 },
-    scale: { type: Number, default: null },
-    scaleOptions: { type: Array, default: null },
+    scale: { type: Number as PropType<number | null>, default: null },
+    scaleOptions: { type: Array as PropType<number[]>, default: null },
     displayValues: { type: Array, required: true },
     isDebug: { type: Boolean, default: false },
 });
 
 const refreshRateItems = REFRESH_RATE_OPTIONS.map((o) => ({ value: o.value, label: o.label }));
 
-const scaleItems = computed(() => props.scaleOptions?.map((v) => ({ value: v, label: String(v) })) ?? []);
+const scaleItems = computed(
+    () =>
+        props.scaleOptions?.map((v) => ({
+            value: v,
+            label: v === DEBUG_SCALE_AUTO ? i18n.getMessage("sensorsScaleAuto") : String(v),
+        })) ?? [],
+);
 
 defineEmits(["update:rate", "update:scale"]);
 defineExpose({ svgElement });
@@ -126,6 +147,12 @@ defineExpose({ svgElement });
 
 <style>
 /* D3 runtime-generated elements — cannot use Tailwind. */
+/* D3 positions every tick label in absolute coordinates and anchors the y labels with
+   text-anchor: end. Under an RTL locale the inherited direction flips that anchor, so the
+   labels spill into the plot area. The graph is numeric, so keep it LTR in every locale. */
+.tab-sensors svg.sensor-graph {
+    direction: ltr;
+}
 .tab-sensors svg g.grid .tick {
     stroke: silver;
     stroke-width: 1px;

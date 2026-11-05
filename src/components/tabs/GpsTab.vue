@@ -8,15 +8,26 @@
                 <!-- Left Column: Configuration + Signal Strength -->
                 <div class="lg:col-span-2 flex flex-col gap-4">
                     <!-- GPS Configuration -->
-                    <UiBox :title="$t('configurationGPS')" :help="$t('configurationGPSHelp')">
+                    <UiBox
+                        :title="$t('configurationGPS')"
+                        :type="hasGpsBuildOption ? 'neutral' : 'warning'"
+                        :highlight="!hasGpsBuildOption"
+                        collapsible
+                        :help="$t('configurationGPSHelp')"
+                    >
+                        <div v-if="!hasGpsBuildOption" class="text-center p-2 text-sm">
+                            {{ $t("configurationGPSNotInBuild") }}
+                        </div>
+
                         <SettingRow
                             v-for="feature in gpsFeatures"
                             :key="feature.bit"
                             :label="$t(`feature${feature.name}`)"
-                            :help="feature.haveTip ? $t(`feature${feature.name}Tip`) : $t('featureGPSTip')"
+                            :help="$t(featureHelpKey(feature))"
                         >
                             <USwitch
                                 :model-value="isFeatureEnabled(feature)"
+                                :disabled="!hasGpsBuildOption"
                                 @update:model-value="toggleFeature(feature, $event)"
                             />
                         </SettingRow>
@@ -25,18 +36,55 @@
                             <USelect
                                 :items="gpsProtocolItems"
                                 v-model="gpsConfig.provider"
+                                :disabled="!hasGpsBuildOption"
                                 @update:model-value="onGpsProtocolChange"
-                                size="sm"
+                                size="xs"
                                 class="min-w-40"
                             />
                         </SettingRow>
 
+                        <SettingRow v-if="showSerialPort" :label="$t('gpsSerialPort')" :help="$t('gpsSerialPortHelp')">
+                            <USelect
+                                v-model="gpsPortIdentifier"
+                                :items="gpsPortOptions"
+                                :disabled="!gpsPortWritable"
+                                size="xs"
+                                class="min-w-40"
+                            />
+                        </SettingRow>
+
+                        <SettingRow v-if="showSerialPort" :label="$t('gpsSerialBaud')" :help="$t('gpsSerialBaudHelp')">
+                            <USelect
+                                :model-value="gpsBaud ?? undefined"
+                                :items="gpsBaudOptions"
+                                :disabled="!gpsPortWritable"
+                                size="xs"
+                                class="min-w-40"
+                                @update:model-value="gpsBaud = $event"
+                            />
+                        </SettingRow>
+
+                        <SettingRow
+                            v-if="showCanDevice"
+                            :label="$t('dronecanCanDevice')"
+                            :help="$t('dronecanCanDeviceHelp')"
+                        >
+                            <!-- USelect's model has no null; null and undefined both leave it unselected. -->
+                            <USelect
+                                :model-value="canDevice ?? undefined"
+                                :items="canDeviceOptions"
+                                size="xs"
+                                class="min-w-40"
+                                @update:model-value="canDevice = $event"
+                            />
+                        </SettingRow>
+
                         <SettingRow v-if="showAutoBaud" :label="$t('configurationGPSAutoBaud')">
-                            <USwitch v-model="autoBaudChecked" />
+                            <USwitch v-model="autoBaudChecked" :disabled="!hasGpsBuildOption" />
                         </SettingRow>
 
                         <SettingRow v-if="showAutoConfig" :label="$t('configurationGPSAutoConfig')">
-                            <USwitch v-model="autoConfigChecked" />
+                            <USwitch v-model="autoConfigChecked" :disabled="!hasGpsBuildOption" />
                         </SettingRow>
 
                         <SettingRow
@@ -44,24 +92,31 @@
                             :label="$t('configurationGPSGalileo')"
                             :help="$t('configurationGPSGalileoHelp')"
                         >
-                            <USwitch v-model="ubloxGalileoChecked" />
+                            <USwitch v-model="ubloxGalileoChecked" :disabled="!hasGpsBuildOption" />
                         </SettingRow>
 
                         <SettingRow :label="$t('configurationGPSHomeOnce')" :help="$t('configurationGPSHomeOnceHelp')">
-                            <USwitch v-model="homeOnceChecked" />
+                            <USwitch v-model="homeOnceChecked" :disabled="!hasGpsBuildOption" />
                         </SettingRow>
 
                         <SettingRow v-if="showUbloxSbas" :label="$t('configurationGPSubxSbas')">
-                            <USelect :items="gpsSbasItems" v-model="gpsConfig.ublox_sbas" size="sm" class="min-w-40" />
+                            <USelect
+                                :items="gpsSbasItems"
+                                v-model="gpsConfig.ublox_sbas"
+                                :disabled="!hasGpsBuildOption"
+                                size="xs"
+                                class="min-w-40"
+                            />
                         </SettingRow>
                     </UiBox>
 
                     <!-- GPS Signal Strength -->
                     <UiBox
                         :title="$t('gpsSignalStrHead')"
-                        :help="$t('gpsSignalStrHeadHelp')"
-                        :type="hasGpsSensor ? 'default' : 'warning'"
+                        :type="hasGpsSensor ? 'neutral' : 'warning'"
                         :highlight="!hasGpsSensor"
+                        collapsible
+                        :help="$t('gpsSignalStrHeadHelp')"
                     >
                         <div v-if="!hasGpsSensor" class="text-center p-2 text-sm" v-html="$t('gpsSignalLost')"></div>
                         <div v-if="hasGpsSensor" class="text-xs">
@@ -108,7 +163,7 @@
                 <!-- Right Column: GPS Info + Map -->
                 <div class="lg:col-span-3 flex flex-col gap-4">
                     <!-- GPS Info -->
-                    <UiBox :title="$t('gpsHead')" :help="$t('gpsHeadHelp')">
+                    <UiBox :title="$t('gpsHead')" type="neutral" collapsible :help="$t('gpsHeadHelp')">
                         <div class="flex justify-between items-center">
                             <span v-html="$t('gps3dFix')"></span>
                             <span
@@ -168,13 +223,13 @@
                     </UiBox>
 
                     <!-- GPS Map -->
-                    <UiBox :title="$t('gpsMapHead')">
+                    <UiBox :title="$t('gpsMapHead')" type="neutral" collapsible>
                         <div
                             v-show="showConnect"
                             class="flex flex-col items-center justify-center h-[433px] gap-2 text-center"
                         >
                             <div>{{ $t("gpsMapMessage1") }}</div>
-                            <UButton variant="subtle" @click="checkConnectivity">
+                            <UButton variant="subtle" size="xs" @click="checkConnectivity">
                                 {{ $t("gpsMapRetry") }}
                             </UButton>
                         </div>
@@ -192,7 +247,7 @@
                         <div v-show="showLoadMap" ref="mapContainerRef" class="map-container h-[433px] w-full">
                             <div ref="mapRef" class="map h-[400px] w-full"></div>
                             <div
-                                class="map-controls flex justify-end items-center gap-1 h-[33px] rounded-b px-1 bg-[#FAFAFA] dark:bg-transparent"
+                                class="map-controls flex justify-end items-center gap-1 h-[33px] rounded-b px-1 bg-(--surface-100) dark:bg-transparent"
                             >
                                 <UTooltip :text="$t('gpsMapSatelliteView')">
                                     <UButton
@@ -247,20 +302,24 @@
             <!-- <div class="btn save_btn">
                 <button type="button" class="save" @click="saveConfig">{{ $t("configurationButtonSave") }}</button>
             </div> -->
-            <UButton :label="$t('configurationButtonSave')" :disabled="!dirty" @click="saveConfig" />
+            <UButton
+                :label="$t('configurationButtonSave')"
+                size="xs"
+                :disabled="!canSave"
+                :loading="isSaving"
+                @click="saveConfig"
+            />
         </div>
     </BaseTab>
 </template>
 
-<script>
-import { defineComponent, ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
+<script lang="ts">
+import { defineComponent, ref, reactive, computed, onMounted, onUnmounted, nextTick, watch, type Ref } from "vue";
+import type { FeatureDefinition } from "../../js/Features";
+import type { GpsData } from "../../stores/fc.types";
 import BaseTab from "./BaseTab.vue";
-import GUI from "../../js/gui";
-import MSP from "../../js/msp";
-import MSPCodes from "../../js/msp/MSPCodes";
-import { mspHelper } from "../../js/msp/MSPHelper";
 import { updateTabList } from "../../js/utils/updateTabList";
-import { initMap } from "../../js/utils/map";
+import { initMap, type MapLayer } from "../../js/utils/map";
 import { fromLonLat } from "ol/proj";
 import { ispConnected } from "../../js/utils/connection";
 import { gpsProtocols as getGpsProtocols } from "../../js/sensor_types";
@@ -268,17 +327,39 @@ import { have_sensor } from "../../js/sensor_helpers";
 import semver from "semver";
 import { API_VERSION_1_46 } from "../../js/data_storage";
 import { i18n } from "../../js/localization";
-import { bit_check, bit_clear, bit_set } from "../../js/bit";
 import { useFlightControllerStore } from "@/stores/fc";
 import { useConnectionStore } from "@/stores/connection";
-import { useNavigationStore } from "@/stores/navigation";
+import { tabSwitchCleanup } from "@/js/tab_adapters";
 import { useDialogStore } from "@/stores/dialog";
-import { useInterval } from "../../composables/useInterval";
+import { useGpsData } from "../../composables/gps/useGpsData";
+import { useGpsSave } from "../../composables/gps/useGpsSave";
+import { useMapViewport } from "../../composables/useMapViewport";
+import { useDirtyState } from "../../composables/useDirtyState";
+import { useSaving, withSaveFailureMessage } from "../../composables/useSaving";
+import { useReboot } from "../../composables/useReboot";
+import { useBuildOptions } from "../../composables/useBuildOptions";
+import { useFeaturePort } from "@/composables/ports/useFeaturePort";
+import { usePortConflicts } from "@/composables/ports/usePortConflicts";
+import { useDronecanDevice } from "@/composables/useDronecanDevice";
+import { GPS_BAUD_RATES } from "@/composables/ports/featureBaudRates";
+import { addArrayElement } from "../../js/utils/array";
 import WikiButton from "../elements/WikiButton.vue";
 import UiBox from "../elements/UiBox.vue";
 import SettingRow from "../elements/SettingRow.vue";
 
 const loadingBarsUrl = new URL("../../images/loading-bars.svg", import.meta.url).href;
+
+/** One row of the satellite signal table. */
+interface SignalRow {
+    gnss: string;
+    /** "-" pads the table out to 32 rows; null marks a channel with no GNSS. */
+    satId: number | string | null;
+    satUsed: boolean;
+    cno: number;
+    /** A translated quality label, or the raw quality byte on pre-UBX-SV-INFO firmware. */
+    quality: string | number;
+    qualityClass: string;
+}
 
 export default defineComponent({
     name: "GpsTab",
@@ -290,15 +371,25 @@ export default defineComponent({
     },
     setup() {
         const fcStore = useFlightControllerStore();
+        const { hasBuildOption } = useBuildOptions();
         const connectionStore = useConnectionStore();
-        const navigationStore = useNavigationStore();
         const dialogStore = useDialogStore();
 
-        const mapRef = ref(null);
-        const mapContainerRef = ref(null);
-        const mapInstance = ref(null);
-        const activeLayer = ref("satellite");
-        const isFullscreen = ref(false);
+        const { isSaving, runSave } = useSaving();
+        const { saveAndReboot } = useReboot();
+
+        const mapRef = ref<HTMLElement | null>(null);
+        const mapContainerRef = ref<HTMLElement | null>(null);
+        // Ref<T> rather than ref<T>()'s inferred type, which unwraps the OpenLayers classes
+        // into structural copies that no longer match OpenLayers' own signatures.
+        const mapInstance = ref(null) as Ref<ReturnType<typeof initMap> | null>;
+        const {
+            isFullscreen,
+            toggleFullscreen,
+            observeContainer,
+            teardown: teardownMapViewport,
+        } = useMapViewport(mapContainerRef, () => mapInstance.value?.map);
+        const activeLayer = ref<MapLayer>("satellite");
         const isOnline = ref(false);
         const isWaiting = ref(true);
         const showMap = ref(false);
@@ -314,12 +405,12 @@ export default defineComponent({
             longitude: 0,
             distToHome: 0,
             positionalDopDisplay: "",
-            magDeclination: null,
+            magDeclination: null as string | null,
         });
 
-        const signalRows = ref([]);
+        const signalRows = ref<SignalRow[]>([]);
 
-        const gpsProtocols = ref([]);
+        const gpsProtocols = ref<string[]>([]);
         const gpsSbas = [
             i18n.getMessage("gpsSbasAutoDetect"),
             i18n.getMessage("gpsSbasEuropeanEGNOS"),
@@ -331,18 +422,43 @@ export default defineComponent({
 
         const updateGpsProtocols = () => {
             gpsProtocols.value = getGpsProtocols();
+
+            // DRONECAN is last in the firmware's provider table and only present under
+            // ENABLE_DRONECAN. The dronecan_device probe is what tells us this board has it: the
+            // USE_DRONECAN build option only reports that the stack was compiled in, not how many
+            // CAN buses it can bind to, and the probe answers both. Appending is only safe once
+            // VIRTUAL is in the list (API 1.47), or the index would land on VIRTUAL instead.
+            if (dronecanSupported.value && gpsProtocols.value.includes("VIRTUAL")) {
+                addArrayElement(gpsProtocols.value, "DRONECAN");
+            }
         };
 
-        const gpsProtocolItems = computed(() =>
-            gpsProtocols.value.map((protocol, idx) => ({ label: protocol, value: idx })),
-        );
+        // The FC can hold a provider index this list does not cover: a board configured for
+        // DRONECAN whose probe failed, or firmware offering a provider this build predates.
+        // Without an entry the select falls back to rendering the bare number, which reads as a
+        // bug rather than as a state. Name it instead, and leave it selectable so switching away
+        // behaves like any other choice.
+        const gpsProtocolItems = computed(() => {
+            const items = gpsProtocols.value.map((protocol, idx) => ({ label: protocol, value: idx }));
+            const provider = gpsConfig.provider;
+
+            if (Number.isInteger(provider) && !items.some((item) => item.value === provider)) {
+                items.push({ label: i18n.getMessage("gpsProtocolUnknown", [provider]), value: provider });
+            }
+
+            return items;
+        });
 
         const gpsSbasItems = computed(() => gpsSbas.map((sbas, index) => ({ label: sbas, value: index })));
 
         const apiVersion = computed(() => fcStore.config.apiVersion);
         const hasGpsSensor = computed(() => have_sensor(fcStore.config.activeSensors, "gps"));
+        const hasGpsBuildOption = computed(() => hasBuildOption("USE_GPS"));
         const hasMag = computed(
-            () => have_sensor(fcStore.config.activeSensors, "mag") && semver.gte(apiVersion.value, API_VERSION_1_46),
+            () =>
+                have_sensor(fcStore.config.activeSensors, "mag") &&
+                semver.gte(apiVersion.value, API_VERSION_1_46) &&
+                hasBuildOption("USE_MAG"),
         );
 
         const gpsConfig = reactive({
@@ -354,26 +470,52 @@ export default defineComponent({
             home_point_once: 0,
         });
 
-        /** Baseline after MSP load or successful save; same pattern as Power/Auxiliary tabs */
-        const gpsTabBaseline = ref("");
+        // From API 1.49 the port and its baud rate live on the GPS parameter group rather than the
+        // shared port function mask, so they are assigned here instead of on the (by then
+        // read-only) ports tab.
+        const {
+            available: gpsPortAvailable,
+            writable: gpsPortWritable,
+            options: gpsPortOptions,
+            selectedIdentifier: gpsPortIdentifier,
+            baudOptions: gpsBaudOptions,
+            selectedBaud: gpsBaud,
+            conflict: gpsPortConflict,
+            load: loadGpsPort,
+            write: writeGpsPort,
+        } = useFeaturePort({
+            setting: "gps_uart",
+            baud: { setting: "gps_baud", rates: GPS_BAUD_RATES },
+        });
 
+        const { confirmPortConflicts } = usePortConflicts(() => [gpsPortConflict]);
+
+        // A DroneCAN GPS has no UART; it is on a CAN bus, so that is what the tab has to show.
+        const {
+            supported: dronecanSupported,
+            enabled: dronecanEnabled,
+            deviceOptions: canDeviceOptions,
+            selectedDevice: canDevice,
+            load: loadDronecan,
+            write: writeDronecan,
+        } = useDronecanDevice();
+
+        /** @returns {string} serialized tab state for dirty comparison */
         const serializeGpsTabState = () =>
             JSON.stringify({
-                featureMask: fcStore.features?.features?._featureMask ?? 0,
+                gpsFeatureEnabled: fcStore.features?.features?.isEnabled?.("GPS") ?? false,
                 provider: gpsConfig.provider,
                 auto_baud: gpsConfig.auto_baud,
                 auto_config: gpsConfig.auto_config,
                 ublox_use_galileo: gpsConfig.ublox_use_galileo,
                 ublox_sbas: gpsConfig.ublox_sbas,
                 home_point_once: gpsConfig.home_point_once,
+                gpsPortIdentifier: gpsPortIdentifier.value,
+                gpsBaud: gpsBaud.value,
+                canDevice: canDevice.value,
             });
 
-        const dirty = computed(() => {
-            if (!gpsTabBaseline.value) {
-                return false;
-            }
-            return gpsTabBaseline.value !== serializeGpsTabState();
-        });
+        const { dirty, markClean, takeSnapshot } = useDirtyState(serializeGpsTabState);
 
         const ubloxIndex = computed(() => gpsProtocols.value.indexOf("UBLOX"));
         const mspIndex = computed(() => gpsProtocols.value.indexOf("MSP"));
@@ -384,6 +526,33 @@ export default defineComponent({
         const showAutoBaud = computed(
             () => (ubloxSelected.value || mspSelected.value) && semver.lt(apiVersion.value, API_VERSION_1_46),
         );
+        // Only these providers read the module over a UART. MSP, VIRTUAL and DRONECAN are fed by
+        // another subsystem, and the firmware strips any port assigned to one of them.
+        //
+        // Named rather than excluded, so a provider this build of the app does not know about
+        // hides the row instead of offering a port that would be silently dropped — the provider
+        // index can land outside the list, which reads back as undefined.
+        const providersUsingSerialPort = new Set(["NMEA", "UBLOX", "SEPTENTRIO"]);
+        const selectedProviderName = computed(() => gpsProtocols.value[gpsConfig.provider]);
+        const showSerialPort = computed(
+            () => gpsPortAvailable.value && providersUsingSerialPort.has(selectedProviderName.value),
+        );
+
+        // Selecting this provider is itself the request to run the stack, so there is no switch:
+        // saving turns it on. The bus belongs to the whole stack rather than to the GPS, and is
+        // offered here only because this is where a DroneCAN GPS is set up; changing it moves
+        // every DroneCAN sensor.
+        const dronecanSelected = computed(() => dronecanSupported.value && selectedProviderName.value === "DRONECAN");
+
+        // The bus is worth choosing only where there is more than one.
+        const showCanDevice = computed(() => dronecanSelected.value && canDeviceOptions.value.length > 1);
+
+        // A DroneCAN provider can already be stored on a board whose stack is off -- exactly the
+        // state a CLI-configured board arrives in. Nothing is dirty then, so Save would be disabled
+        // and the GUI could never turn the stack on. Offer the save on its own merit.
+        const dronecanNeedsEnable = computed(() => dronecanSelected.value && !dronecanEnabled.value);
+        const canSave = computed(() => dirty.value || dronecanNeedsEnable.value);
+
         const showUbloxGalileo = computed(() => showAutoConfig.value && gpsConfig.auto_config === 1);
         const showUbloxSbas = computed(() => showAutoConfig.value && gpsConfig.auto_config === 1);
         const showPositionalDop = computed(() => semver.gte(apiVersion.value, API_VERSION_1_46));
@@ -425,28 +594,38 @@ export default defineComponent({
         const showLoadMap = computed(() => isOnline.value && showMap.value);
 
         const gpsFeatures = computed(() => {
-            if (!fcStore.features?.features?._features) {
+            if (!fcStore.features?.features?.getFeatures?.()) {
                 return [];
             }
-            return fcStore.features.features._features.filter((feature) => feature.group === "gps");
+            return fcStore.features.features.getFeatures().filter((feature) => feature.group === "gps");
         });
 
-        const isFeatureEnabled = (feature) => {
-            if (!fcStore.features?.features) return false;
-            return bit_check(fcStore.features.features._featureMask, feature.bit);
-        };
-
-        const toggleFeature = (feature, checked) => {
-            if (!fcStore.features?.features) return;
-            if (checked) {
-                fcStore.features.features._featureMask = bit_set(fcStore.features.features._featureMask, feature.bit);
-            } else {
-                fcStore.features.features._featureMask = bit_clear(fcStore.features.features._featureMask, feature.bit);
+        // Returns the i18n key so the template resolves it with $t and stays
+        // reactive to locale changes.
+        const featureHelpKey = (feature: FeatureDefinition) => {
+            if (!hasGpsBuildOption.value) {
+                return "configurationGPSNotInBuild";
             }
-            updateTabList(fcStore.features.features);
+            if (feature.haveTip) {
+                return `feature${feature.name}Tip`;
+            }
+            return "featureGPSTip";
         };
 
-        const setLayer = (layerKey) => {
+        const isFeatureEnabled = (feature: FeatureDefinition) => {
+            return fcStore.features?.features?.isEnabled?.(feature.name) ?? false;
+        };
+
+        const toggleFeature = (feature: FeatureDefinition, checked: boolean) => {
+            const featuresHelper = fcStore.features?.features;
+            if (!featuresHelper) {
+                return;
+            }
+            featuresHelper.updateData({ name: feature.name, checked });
+            updateTabList(featuresHelper);
+        };
+
+        const setLayer = (layerKey: MapLayer) => {
             if (!mapInstance.value?.layers) return;
             Object.entries(mapInstance.value.layers).forEach(([key, layer]) => {
                 layer.setVisible(key === layerKey);
@@ -456,46 +635,18 @@ export default defineComponent({
         };
 
         const zoomIn = () => {
-            if (!mapInstance.value?.mapView) return;
-            mapInstance.value.mapView.setZoom(mapInstance.value.mapView.getZoom() + 1);
+            const zoom = mapInstance.value?.mapView.getZoom();
+            if (zoom === undefined) return;
+            mapInstance.value?.mapView.setZoom(zoom + 1);
         };
 
         const zoomOut = () => {
-            if (!mapInstance.value?.mapView) return;
-            mapInstance.value.mapView.setZoom(mapInstance.value.mapView.getZoom() - 1);
+            const zoom = mapInstance.value?.mapView.getZoom();
+            if (zoom === undefined) return;
+            mapInstance.value?.mapView.setZoom(zoom - 1);
         };
 
-        const toggleFullscreen = () => {
-            const container = mapContainerRef.value;
-            if (!container) return;
-
-            if (!document.fullscreenElement && !document.webkitFullscreenElement && !document.msFullscreenElement) {
-                if (container.requestFullscreen) {
-                    container.requestFullscreen();
-                } else if (container.webkitRequestFullscreen) {
-                    container.webkitRequestFullscreen();
-                } else if (container.msRequestFullscreen) {
-                    container.msRequestFullscreen();
-                }
-            } else if (document.exitFullscreen) {
-                document.exitFullscreen();
-            } else if (document.webkitExitFullscreen) {
-                document.webkitExitFullscreen();
-            } else if (document.msExitFullscreen) {
-                document.msExitFullscreen();
-            }
-        };
-
-        const handleFullscreenChange = () => {
-            isFullscreen.value = !!(
-                document.fullscreenElement ||
-                document.webkitFullscreenElement ||
-                document.msFullscreenElement
-            );
-            requestAnimationFrame(() => mapInstance.value?.map?.updateSize());
-        };
-
-        const getPositionalDopQuality = (positionalDop) => {
+        const getPositionalDopQuality = (positionalDop: number) => {
             let qualityColor;
             let stars;
             if (positionalDop < 1) {
@@ -533,66 +684,122 @@ export default defineComponent({
             "gnssQualityFullyLocked",
         ];
 
-        const updateSignalStrengths = () => {
-            const hasGPS = hasGpsSensor.value;
-            const rows = [];
+        const qualityClassFor = (qualityValue: number) => {
+            if (qualityValue >= 5) {
+                return "bg-[var(--success-500)] text-white";
+            }
+            if (qualityValue === 4) {
+                return "bg-[var(--warning-500)] text-black";
+            }
+            return "bg-[var(--surface-500)] text-white";
+        };
 
-            if (!hasGPS) {
-                signalRows.value = rows;
+        // Firmware reporting more than 16 channels sends UBX-NAV-SIG style GNSS ids and quality bits.
+        const gnssSignalRows = (gpsData: GpsData, channels: number): SignalRow[] => {
+            const rows: SignalRow[] = [];
+            const maxUIChannels = 32;
+            const channelCount = Math.min(maxUIChannels, channels) || 32;
+
+            for (let i = 0; i < channelCount; i++) {
+                const gnssId = gpsData.chn[i];
+                if (gnssId >= 7) {
+                    rows.push({ gnss: "-", satId: null, satUsed: false, cno: 0, quality: "", qualityClass: "" });
+                    continue;
+                }
+
+                const satUsed = (gpsData.quality[i] & 0x8) >> 3;
+                const qualityValue = gpsData.quality[i] & 0x7;
+                rows.push({
+                    gnss: gnssArray[gnssId],
+                    satId: gpsData.svid[i],
+                    satUsed: !!satUsed,
+                    cno: gpsData.cno[i],
+                    quality: i18n.getMessage(qualityArray[qualityValue]),
+                    qualityClass: qualityClassFor(qualityValue),
+                });
+            }
+            return rows;
+        };
+
+        // Older firmware: raw quality bytes, padded out to 32 rows.
+        const legacySignalRows = (gpsData: GpsData, channels: number): SignalRow[] => {
+            const rows: SignalRow[] = [];
+            for (let i = 0; i < channels; i++) {
+                rows.push({
+                    gnss: "-",
+                    satId: gpsData.svid[i],
+                    satUsed: false,
+                    cno: gpsData.cno[i],
+                    quality: gpsData.quality[i],
+                    qualityClass: "",
+                });
+            }
+
+            for (let i = channels; i < 32; i++) {
+                rows.push({ gnss: "-", satId: "-", satUsed: false, cno: 0, quality: "", qualityClass: "" });
+            }
+            return rows;
+        };
+
+        const updateSignalStrengths = () => {
+            if (!hasGpsSensor.value) {
+                signalRows.value = [];
                 return;
             }
 
             const gpsData = fcStore.gpsData || {};
             const channels = gpsData?.chn?.length || 0;
 
-            if (channels > 16) {
-                const maxUIChannels = 32;
-                const channelCount = Math.min(maxUIChannels, channels) || 32;
+            signalRows.value = channels > 16 ? gnssSignalRows(gpsData, channels) : legacySignalRows(gpsData, channels);
+        };
 
-                for (let i = 0; i < channelCount; i++) {
-                    const gnssId = gpsData.chn[i];
-                    if (gnssId >= 7) {
-                        rows.push({ gnss: "-", satId: null, satUsed: false, cno: 0, quality: "", qualityClass: "" });
-                        continue;
-                    }
-
-                    const satUsed = (gpsData.quality[i] & 0x8) >> 3;
-                    const qualityValue = gpsData.quality[i] & 0x7;
-                    const quality = i18n.getMessage(qualityArray[qualityValue]);
-                    const qualityColor =
-                        qualityValue >= 5
-                            ? "bg-[var(--success-500)] text-white"
-                            : qualityValue === 4
-                                ? "bg-[var(--warning-500)] text-black"
-                                : "bg-[var(--surface-500)] text-white";
-
-                    rows.push({
-                        gnss: gnssArray[gnssId],
-                        satId: gpsData.svid[i],
-                        satUsed: !!satUsed,
-                        cno: gpsData.cno[i],
-                        quality,
-                        qualityClass: qualityColor,
-                    });
+        // Put the aircraft icon on the map, or show the no-fix icon when there is no position yet.
+        const placeOnMap = (gpsFoundPosition: boolean, longitude: number, latitude: number, headingRadians: number) => {
+            if (!gpsFoundPosition) {
+                if (mapInstance.value) {
+                    mapInstance.value.iconFeature.setStyle(mapInstance.value.iconStyleNoFix);
                 }
-            } else {
-                for (let i = 0; i < channels; i++) {
-                    rows.push({
-                        gnss: "-",
-                        satId: gpsData.svid[i],
-                        satUsed: false,
-                        cno: gpsData.cno[i],
-                        quality: gpsData.quality[i],
-                        qualityClass: "",
-                    });
-                }
-
-                for (let i = channels; i < 32; i++) {
-                    rows.push({ gnss: "-", satId: "-", satUsed: false, cno: 0, quality: "", qualityClass: "" });
-                }
+                return;
             }
 
-            signalRows.value = rows;
+            initializeMap();
+            const mapObj = mapInstance.value?.map;
+            const view = mapInstance.value?.mapView;
+            const geometry = mapInstance.value?.iconGeometry;
+            const feature = mapInstance.value?.iconFeature;
+            // initializeMap() leaves no map when the container is not mounted yet.
+            const iconStyle = hasMag.value ? mapInstance.value?.iconStyleMag : mapInstance.value?.iconStyleGPS;
+
+            const rerender = () => {
+                if (!mapObj || !mapObj.getTargetElement || !mapObj.getTargetElement()) return;
+                mapObj.updateSize();
+                const renderer = mapObj.getRenderer && mapObj.getRenderer();
+                if (renderer) {
+                    mapObj.renderSync();
+                }
+            };
+
+            if (iconStyle && feature && geometry && view && mapObj) {
+                iconStyle.getImage()?.setRotation(headingRadians);
+                feature.setStyle(iconStyle);
+                const center = fromLonLat([longitude, latitude]);
+                view.setCenter(center);
+                geometry.setCoordinates(center);
+                requestAnimationFrame(rerender);
+                setTimeout(rerender, 50);
+            }
+        };
+
+        const updatePositionalDop = (positionalDopRaw: number | undefined, magDeclination: number | undefined) => {
+            if (!showPositionalDop.value) {
+                gpsInfo.positionalDopDisplay = "";
+                gpsInfo.magDeclination = null;
+                return;
+            }
+            const positionalDop = Number(((positionalDopRaw || 0) / 100).toFixed(2));
+            const { qualityColor, stars } = getPositionalDopQuality(positionalDop);
+            gpsInfo.positionalDopDisplay = `${stars} <span class="px-1.5 py-0.5 rounded text-xs ${qualityColor}">${positionalDop}</span>`;
+            gpsInfo.magDeclination = hasMag.value ? (magDeclination || 0).toFixed(1) : null;
         };
 
         const updateUi = () => {
@@ -616,15 +823,7 @@ export default defineComponent({
             gpsInfo.longitude = longitude;
             gpsInfo.distToHome = gpsData?.distanceToHome || 0;
 
-            if (showPositionalDop.value) {
-                const positionalDop = Number(((gpsData?.positionalDop || 0) / 100).toFixed(2));
-                const { qualityColor, stars } = getPositionalDopQuality(positionalDop);
-                gpsInfo.positionalDopDisplay = `${stars} <span class="px-1.5 py-0.5 rounded text-xs ${qualityColor}">${positionalDop}</span>`;
-                gpsInfo.magDeclination = hasMag.value ? (compassConfig?.mag_declination || 0).toFixed(1) : null;
-            } else {
-                gpsInfo.positionalDopDisplay = "";
-                gpsInfo.magDeclination = null;
-            }
+            updatePositionalDop(gpsData?.positionalDop, compassConfig?.mag_declination);
 
             updateSignalStrengths();
 
@@ -633,36 +832,7 @@ export default defineComponent({
             if (ispConnected()) {
                 isOnline.value = true;
                 gpsFoundPosition = !!(longitude && latitude);
-
-                if (gpsFoundPosition) {
-                    initializeMap();
-                    const mapObj = mapInstance.value?.map;
-                    const view = mapInstance.value?.mapView;
-                    const geometry = mapInstance.value?.iconGeometry;
-                    const feature = mapInstance.value?.iconFeature;
-                    const iconStyle = hasMag.value ? mapInstance.value.iconStyleMag : mapInstance.value.iconStyleGPS;
-
-                    const rerender = () => {
-                        if (!mapObj || !mapObj.getTargetElement || !mapObj.getTargetElement()) return;
-                        mapObj.updateSize();
-                        const renderer = mapObj.getRenderer && mapObj.getRenderer();
-                        if (renderer) {
-                            mapObj.renderSync();
-                        }
-                    };
-
-                    if (iconStyle && feature && geometry && view && mapObj) {
-                        iconStyle.getImage().setRotation(imuHeadingRadians);
-                        feature.setStyle(iconStyle);
-                        const center = fromLonLat([longitude, latitude]);
-                        view.setCenter(center);
-                        geometry.setCoordinates(center);
-                        requestAnimationFrame(rerender);
-                        setTimeout(rerender, 50);
-                    }
-                } else if (mapInstance.value) {
-                    mapInstance.value.iconFeature.setStyle(mapInstance.value.iconStyleNoFix);
-                }
+                placeOnMap(gpsFoundPosition, longitude, latitude, imuHeadingRadians);
             } else {
                 isOnline.value = false;
             }
@@ -673,35 +843,8 @@ export default defineComponent({
             requestAnimationFrame(() => mapInstance.value?.map?.updateSize());
         };
 
-        const getMagData = () => {
-            if (hasMag.value) {
-                MSP.send_message(MSPCodes.MSP_COMPASS_CONFIG, false, false, updateUi);
-            } else {
-                updateUi();
-            }
-        };
-
-        const getImuData = () => {
-            MSP.send_message(MSPCodes.MSP_RAW_IMU, false, false, getMagData);
-        };
-
-        const getAttitudeData = () => {
-            MSP.send_message(MSPCodes.MSP_ATTITUDE, false, false, getImuData);
-        };
-
-        const getGpsSvInfo = () => {
-            MSP.send_message(MSPCodes.MSP_GPS_SV_INFO, false, false, getAttitudeData);
-        };
-
-        const getCompGpsData = () => {
-            MSP.send_message(MSPCodes.MSP_COMP_GPS, false, false, getGpsSvInfo);
-        };
-
-        const getRawGpsData = () => {
-            MSP.send_message(MSPCodes.MSP_RAW_GPS, false, false, getCompGpsData);
-        };
-
-        const { addInterval, removeAllIntervals } = useInterval();
+        const { fetchGpsConfig, startPolling, pausePolling, resumePolling, stopPolling } = useGpsData();
+        const { sendGpsConfig } = useGpsSave();
 
         const checkConnectivity = () => {
             isOnline.value = ispConnected();
@@ -716,41 +859,81 @@ export default defineComponent({
         const loadGpsConfig = async () => {
             try {
                 if (!connectionStore.connectionValid) {
-                    GUI.content_ready();
                     return;
                 }
 
-                await MSP.promise(MSPCodes.MSP_FEATURE_CONFIG);
-                await MSP.promise(MSPCodes.MSP_GPS_CONFIG);
+                await fetchGpsConfig();
 
                 Object.assign(gpsConfig, fcStore.gpsConfig || {});
 
+                // Probed before the protocol list is built, which offers DRONECAN only on a board
+                // that has it.
+                await loadDronecan();
                 await updateGpsProtocols();
+                await loadGpsPort();
 
-                gpsTabBaseline.value = serializeGpsTabState();
+                markClean();
 
                 isOnline.value = ispConnected();
                 isWaiting.value = true;
                 showMap.value = false;
 
-                addInterval("gps_pull", getRawGpsData, 100, true);
+                startPolling(hasMag, updateUi);
             } catch (error) {
                 console.error("Failed to load GPS configuration", error);
                 isOnline.value = ispConnected();
                 isWaiting.value = false;
-            } finally {
-                GUI.content_ready();
             }
         };
 
-        const saveConfig = async () => {
-            Object.assign(fcStore.gpsConfig, gpsConfig);
+        const saveConfig = () => {
+            // The firmware answers MSP_SET_GPS_CONFIG with an error when it was
+            // built without USE_GPS, and MSP_SET_FEATURE_CONFIG has been written
+            // by then. Do not start the sequence at all.
+            if (!hasGpsBuildOption.value) {
+                return undefined;
+            }
 
-            await MSP.promise(MSPCodes.MSP_SET_FEATURE_CONFIG, mspHelper.crunch(MSPCodes.MSP_SET_FEATURE_CONFIG));
-            await MSP.promise(MSPCodes.MSP_SET_GPS_CONFIG, mspHelper.crunch(MSPCodes.MSP_SET_GPS_CONFIG));
+            return runSave(async () => {
+                // Warn before a pick that would take a port from another feature; a cancel here
+                // leaves the save untouched, before anything has been written to the FC.
+                if (!(await confirmPortConflicts())) {
+                    return;
+                }
 
-            mspHelper.writeConfiguration(true);
-            gpsTabBaseline.value = serializeGpsTabState();
+                const savedSnapshot = takeSnapshot();
+
+                Object.assign(fcStore.gpsConfig, gpsConfig);
+
+                // The CLI has its own queue, so the telemetry poll's MSP chain has to stop for
+                // the port write below rather than run alongside it.
+                pausePolling();
+                try {
+                    await sendGpsConfig();
+
+                    // gps_uart and gps_baud share the parameter group MSP_SET_GPS_CONFIG just
+                    // wrote, and the persist below serialises that group, so this has to sit
+                    // between the two. Throwing skips the persist, so a refused port leaves
+                    // nothing written to EEPROM.
+                    try {
+                        await writeGpsPort();
+                    } catch (error) {
+                        throw withSaveFailureMessage(error, i18n.getMessage("gpsSerialPortSaveFailed"));
+                    }
+
+                    try {
+                        await writeDronecan({ enable: dronecanSelected.value });
+                    } catch (error) {
+                        throw withSaveFailureMessage(error, i18n.getMessage("dronecanSaveFailed"));
+                    }
+
+                    await saveAndReboot();
+                } finally {
+                    resumePolling();
+                }
+
+                markClean(savedSnapshot);
+            });
         };
 
         const initializeMap = () => {
@@ -769,20 +952,16 @@ export default defineComponent({
 
         onMounted(() => {
             nextTick(() => {
+                observeContainer();
                 initializeMap();
                 mapInstance.value?.map?.updateSize();
             });
             loadGpsConfig();
-            document.addEventListener("fullscreenchange", handleFullscreenChange);
-            document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
-            document.addEventListener("MSFullscreenChange", handleFullscreenChange);
         });
 
         const teardown = () => {
-            removeAllIntervals();
-            document.removeEventListener("fullscreenchange", handleFullscreenChange);
-            document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
-            document.removeEventListener("MSFullscreenChange", handleFullscreenChange);
+            stopPolling();
+            teardownMapViewport();
             if (mapInstance.value?.destroy) {
                 mapInstance.value.destroy();
             }
@@ -790,7 +969,7 @@ export default defineComponent({
         };
 
         onUnmounted(() => {
-            navigationStore.cleanup(teardown);
+            tabSwitchCleanup(teardown);
         });
 
         watch(showLoadMap, (visible) => {
@@ -805,6 +984,7 @@ export default defineComponent({
                             mapObj.renderSync();
                         }
                     }
+                    observeContainer();
                 });
             }
         });
@@ -820,6 +1000,7 @@ export default defineComponent({
             gpsInfo,
             signalRows,
             hasGpsSensor,
+            hasGpsBuildOption,
             hasMag,
             autoBaudChecked,
             autoConfigChecked,
@@ -827,6 +1008,16 @@ export default defineComponent({
             homeOnceChecked,
             showAutoBaud,
             showAutoConfig,
+            showSerialPort,
+            canSave,
+            showCanDevice,
+            canDeviceOptions,
+            canDevice,
+            gpsPortWritable,
+            gpsPortOptions,
+            gpsPortIdentifier,
+            gpsBaudOptions,
+            gpsBaud,
             showUbloxGalileo,
             showUbloxSbas,
             showPositionalDop,
@@ -835,6 +1026,7 @@ export default defineComponent({
             showWaiting,
             showLoadMap,
             gpsFeatures,
+            featureHelpKey,
             isFeatureEnabled,
             toggleFeature,
             setLayer,
@@ -843,6 +1035,7 @@ export default defineComponent({
             toggleFullscreen,
             checkConnectivity,
             saveConfig,
+            isSaving,
             dirty,
             onGpsProtocolChange,
             loadingBarsUrl,
@@ -866,13 +1059,18 @@ export default defineComponent({
         .map-controls {
             position: fixed;
             bottom: 0;
-            left: 0;
+            inset-inline-start: 0;
             width: 100vw !important;
             z-index: 1000;
         }
     }
 
     .map-container {
+        /* Stay in normal flow so UiBox grows with the map (global .map-container
+           from other tabs must not pull this out via position:absolute). */
+        position: relative;
+        overflow: hidden;
+
         &:fullscreen {
             .fullscreen-map-styles();
         }

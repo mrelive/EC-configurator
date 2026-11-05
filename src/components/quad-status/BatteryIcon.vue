@@ -6,10 +6,9 @@
     </div>
 </template>
 
-<script>
+<script lang="ts">
 import { defineComponent, computed } from "vue";
-
-const NO_BATTERY_VOLTAGE_MAXIMUM = 1.8;
+import { NO_BATTERY_VOLTAGE_MAXIMUM, estimateCellCount } from "../../js/utils/battery";
 
 export default defineComponent({
     props: {
@@ -18,6 +17,10 @@ export default defineComponent({
             default: "",
         },
         voltage: {
+            type: Number,
+            default: 0,
+        },
+        cellCount: {
             type: Number,
             default: 0,
         },
@@ -35,13 +38,9 @@ export default defineComponent({
         },
     },
     setup(props) {
-        const nbCells = computed(() => {
-            let cells = Math.floor(props.voltage / props.vbatmaxcellvoltage) + 1;
-            if (props.voltage === 0) {
-                cells = 1;
-            }
-            return cells;
-        });
+        const nbCells = computed(() =>
+            props.cellCount > 0 ? props.cellCount : estimateCellCount(props.voltage, props.vbatmaxcellvoltage),
+        );
 
         const min = computed(() => {
             return props.vbatwarningcellvoltage * nbCells.value;
@@ -66,8 +65,8 @@ export default defineComponent({
                     "state-ok": state === "0",
                     "state-warning": state === "1",
                     "state-empty": state === "2",
-                    // TODO: BATTERY_NOT_PRESENT
-                    // TODO: BATTERY_INIT
+                    "state-not-present": state === "3",
+                    "state-init": state === "4",
                 };
             }
             const isWarning = props.voltage < warn.value;
@@ -79,6 +78,10 @@ export default defineComponent({
         });
 
         const batteryWidth = computed(() => {
+            const state = String(props.batteryState ?? "");
+            if (state === "3" || state === "4") {
+                return 100;
+            }
             return isEmpty.value ? 100 : ((props.voltage - min.value) / (max.value - min.value)) * 100;
         });
 
@@ -95,15 +98,7 @@ export default defineComponent({
 });
 </script>
 
-<style scoped>
-.quad-status-contents {
-    position: absolute;
-    top: 10px;
-    left: 14px;
-    height: 10px;
-    width: 31px;
-}
-
+<style lang="less">
 .battery-icon {
     position: relative;
     background-image: url(../../images/icons/cf_icon_bat_grey.svg);
@@ -114,13 +109,59 @@ export default defineComponent({
     width: 60px;
     transition: none;
     margin-top: 4px;
-    margin-left: -4px;
+    margin-inline-start: -4px;
     background-repeat: no-repeat;
-}
 
-.battery-status {
-    height: 11px;
-    max-width: 100%;
+    .quad-status-contents {
+        position: absolute;
+        top: 10px;
+        /* Insets match the SVG inner hole so a full bar keeps equal gaps on both sides. */
+        inset-inline-start: 14px;
+        height: 10px;
+        width: 29px;
+    }
+
+    .battery-status {
+        height: 11px;
+        max-width: 100%;
+    }
+
+    .battery-status.state-ok {
+        background-color: var(--success-500);
+    }
+    .battery-status.state-warning {
+        background-color: var(--error-500);
+    }
+
+    .battery-status.state-empty {
+        animation: error-blinker 1s linear infinite;
+    }
+
+    .battery-status.state-not-present {
+        background-color: transparent;
+    }
+
+    .battery-status.state-init {
+        background-color: var(--surface-500);
+    }
+
+    &.battery-icon--compact {
+        margin-top: 0;
+        margin-inline-start: 0;
+        height: 24px;
+        width: 48px;
+    }
+
+    &.battery-icon--compact .quad-status-contents {
+        top: 8px;
+        inset-inline-start: 11px;
+        width: 24px;
+        height: 8px;
+    }
+
+    &.battery-icon--compact .battery-status {
+        height: 9px;
+    }
 }
 
 @keyframes error-blinker {
@@ -130,34 +171,5 @@ export default defineComponent({
     50% {
         background-color: var(--error-500);
     }
-}
-
-.battery-status.state-ok {
-    background-color: #59aa29;
-}
-.battery-status.state-warning {
-    background-color: var(--error-500);
-}
-
-.battery-status.state-empty {
-    animation: error-blinker 1s linear infinite;
-}
-
-.battery-icon--compact {
-    margin-top: 0;
-    margin-left: 0;
-    height: 24px;
-    width: 48px;
-}
-
-.battery-icon--compact .quad-status-contents {
-    top: 8px;
-    left: 11px;
-    width: 26px;
-    height: 8px;
-}
-
-.battery-icon--compact .battery-status {
-    height: 9px;
 }
 </style>

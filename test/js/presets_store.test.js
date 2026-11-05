@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
-import GUI from "../../src/js/gui";
-import FC from "../../src/js/fc";
+import { useFlightControllerStore } from "../../src/stores/fc";
 import { favoritePresets } from "../../src/components/tabs/presets/FavoritePresets";
 import { usePresetsStore } from "../../src/stores/presets";
 
@@ -88,16 +87,18 @@ set bar = on
     });
 }
 
+let fcStore;
+
 describe("usePresetsStore", () => {
     beforeEach(() => {
         setActivePinia(createPinia());
+        fcStore = useFlightControllerStore();
         localStorage.clear();
         favoritePresets.loadFromStorage();
-        FC.CONFIG.flightControllerVersion = "4.5.1";
+        fcStore.config.flightControllerVersion = "4.5.1";
         vi.restoreAllMocks();
         vi.spyOn(console, "error").mockImplementation(() => {});
         vi.stubGlobal("fetch", mockFetchImplementation());
-        vi.spyOn(GUI, "showYesNoDialog").mockImplementation((settings) => settings.buttonYesCallback?.());
     });
 
     it("loads repositories, preselects firmware filters, and opens preset details", async () => {
@@ -120,7 +121,7 @@ describe("usePresetsStore", () => {
         expect(store.selectedPresetOptionLabels).toEqual(["Option A"]);
         expect(store.selectedPresetCliStrings).toEqual(["set foo = on"]);
 
-        store.setOptionChecked("1", true);
+        store.selectOption("1");
         expect(store.selectedPresetCliStrings).toEqual(["set foo = on", "set bar = on"]);
     });
 

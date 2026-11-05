@@ -2,7 +2,7 @@
     <BaseTab tab-name="receiver">
         <div class="content_wrapper">
             <div class="tab_title" v-html="$t('tabReceiver')"></div>
-            <WikiButton docUrl="Receiver" />
+            <WikiButton docUrl="receiver" />
             <UiBox highlight class="mb-3">
                 <p v-html="$t('receiverHelp')"></p>
             </UiBox>
@@ -10,14 +10,34 @@
             <div class="grid-row grid-box col5">
                 <!-- Left Column: Model Preview + Channel Bars -->
                 <div class="col-span-2">
-                    <UiBox :title="$t('receiverModelPreview')" :padding="false" class="bg-muted">
+                    <UiBox
+                        :title="$t('receiverModelPreview')"
+                        type="neutral"
+                        collapsible
+                        :padding="false"
+                        class="bg-muted"
+                    >
                         <div class="background_paper h-48 w-full" ref="modelPreviewContainer">
                             <canvas ref="modelCanvas"></canvas>
                         </div>
                     </UiBox>
+                    <!-- Failsafe / RX-loss warning -->
+                    <UiBox
+                        v-if="failsafeActive"
+                        highlight
+                        type="warning"
+                        role="alert"
+                        :title="$t('receiverFailsafeActiveTitle')"
+                    >
+                        <p>{{ $t("receiverFailsafeActiveWarning") }}</p>
+                    </UiBox>
                     <!-- Channel Bars -->
                     <div class="bars">
-                        <ul v-for="(channel, index) in channelBars" :key="index">
+                        <ul
+                            v-for="(channel, index) in channelBars"
+                            :key="index"
+                            :class="channel.isAux ? `aux-${channel.state}` : undefined"
+                        >
                             <li class="name">{{ channel.name }}</li>
                             <div class="w-full relative">
                                 <UProgress
@@ -25,7 +45,7 @@
                                     :max="100"
                                     :ui="{
                                         base: 'w-full bg-elevated',
-                                        indicator: 'duration-50',
+                                        indicator: failsafeActive ? 'duration-50 !bg-warning' : 'duration-50',
                                     }"
                                     :disabled="rc.active_channels === 0"
                                     size="xl"
@@ -45,7 +65,7 @@
                 <div class="col-span-3">
                     <!-- Receiver Mode -->
                     <div class="receiver">
-                        <UiBox :title="$t('configurationReceiver')">
+                        <UiBox :title="$t('configurationReceiver')" type="neutral" collapsible>
                             <SettingRow :label="$t('configurationReceiverMode')">
                                 <USelect
                                     :items="rxModeOptions"
@@ -71,6 +91,19 @@
                                         }"
                                         class="min-w-52"
                                         :ui="{ content: 'max-h-72' }"
+                                    />
+                                </SettingRow>
+                                <SettingRow
+                                    v-if="rxPortAvailable"
+                                    :label="$t('receiverSerialPort')"
+                                    :help="$t('receiverSerialPortHelp')"
+                                >
+                                    <USelect
+                                        v-model="rxPortIdentifier"
+                                        :items="rxPortOptions"
+                                        :disabled="!rxPortWritable"
+                                        class="min-w-52"
+                                        @update:model-value="onRxPortChange"
                                     />
                                 </SettingRow>
                                 <UiBox highlight v-if="showSomeRxTypesDisabled">
@@ -130,27 +163,19 @@
                     </div>
 
                     <div class="grid-box col6">
-                        <!-- Telemetry -->
-                        <UiBox
-                            :title="$t('configurationTelemetry')"
-                            :help="$t('configurationTelemetryHelp')"
-                            class="col-span-2"
-                        >
-                            <SettingRow :label="$t('featureTELEMETRY')">
-                                <USwitch
-                                    :model-value="isTelemetryEnabled"
-                                    @update:model-value="(checked) => toggleTelemetry(checked)"
-                                />
-                            </SettingRow>
-                        </UiBox>
-
                         <!-- RSSI -->
-                        <UiBox :title="$t('configurationRSSI')" :help="$t('configurationRSSIHelp')" class="col-span-3">
+                        <UiBox
+                            :title="$t('configurationRSSI')"
+                            :help="$t('configurationRSSIHelp')"
+                            type="neutral"
+                            collapsible
+                            class="col-span-3"
+                        >
                             <div class="flex justify-between gap-2 flex-wrap">
                                 <SettingRow :label="$t('featureRSSI_ADC')">
                                     <USwitch
                                         :model-value="isRssiAdcEnabled"
-                                        @update:model-value="(checked) => toggleRssiAdc(checked)"
+                                        @update:model-value="(checked: boolean) => toggleRssiAdc(checked)"
                                     />
                                 </SettingRow>
                                 <SettingRow :label="$t('receiverRssiChannel')">
@@ -170,8 +195,8 @@
                         </UiBox>
 
                         <!-- Channel Map -->
-                        <UiBox :title="$t('receiverChannelMap')" class="col-span-1">
-                            <SettingRow>
+                        <UiBox :title="$t('receiverChannelMap')" type="neutral" collapsible class="col-span-1">
+                            <SettingRow data-setting-search-key="receiverChannelMap">
                                 <UFieldGroup>
                                     <UInput
                                         v-model="channelMapString"
@@ -193,8 +218,91 @@
                             </SettingRow>
                         </UiBox>
 
+                        <!-- Camera Control -->
+                        <UiBox
+                            v-if="rcdevicePortAvailable"
+                            :title="$t('rcdeviceSectionTitle')"
+                            type="neutral"
+                            collapsible
+                            class="col-span-2"
+                        >
+                            <SettingRow :label="$t('rcdeviceSerialPort')" :help="$t('rcdeviceSerialPortHelp')">
+                                <USelect
+                                    v-model="rcdevicePortIdentifier"
+                                    :items="rcdevicePortOptions"
+                                    :disabled="!rcdevicePortWritable"
+                                    size="xs"
+                                    class="min-w-28"
+                                    @update:model-value="onSerialDeviceChange"
+                                />
+                            </SettingRow>
+                        </UiBox>
+
+                        <!-- Telemetry -->
+                        <UiBox
+                            :title="$t('configurationTelemetry')"
+                            :help="$t('configurationTelemetryHelp')"
+                            type="neutral"
+                            collapsible
+                            class="col-span-6"
+                        >
+                            <SettingRow :label="$t('featureTELEMETRY')">
+                                <USwitch
+                                    :model-value="isTelemetryEnabled"
+                                    @update:model-value="(checked: boolean) => toggleTelemetry(checked)"
+                                />
+                            </SettingRow>
+                            <!-- Instances are revealed one at a time: auto-fit lets one or two fill the row, and a wrapped one keeps the column width. -->
+                            <div class="grid grid-cols-[repeat(auto-fit,minmax(min(22rem,100%),1fr))] gap-3">
+                                <UiBox
+                                    v-for="{ port, instance } in visibleTelemetryPorts"
+                                    :key="instance"
+                                    :title="$t('telemetryInstanceTitle', { 1: instance })"
+                                    type="neutral"
+                                >
+                                    <SettingRow :label="$t('telemetryInstanceProtocol')">
+                                        <!-- USelect's model has no null; null and undefined both leave it unselected. -->
+                                        <USelect
+                                            :model-value="port.selectedProtocol ?? undefined"
+                                            :items="port.protocolOptions"
+                                            :disabled="!port.writable"
+                                            size="xs"
+                                            class="min-w-40"
+                                            @update:model-value="
+                                                port.selectedProtocol = $event;
+                                                onSerialDeviceChange();
+                                            "
+                                        />
+                                    </SettingRow>
+                                    <SettingRow :label="$t('telemetryInstancePort')">
+                                        <USelect
+                                            v-model="port.selectedIdentifier"
+                                            :items="port.options"
+                                            :disabled="!port.writable"
+                                            size="xs"
+                                            class="min-w-40"
+                                            @update:model-value="onSerialDeviceChange"
+                                        />
+                                    </SettingRow>
+                                    <SettingRow :label="$t('telemetryInstanceBaud')">
+                                        <USelect
+                                            :model-value="port.selectedBaud ?? undefined"
+                                            :items="port.baudOptions"
+                                            :disabled="!port.writable"
+                                            size="xs"
+                                            class="min-w-40"
+                                            @update:model-value="
+                                                port.selectedBaud = $event;
+                                                onSerialDeviceChange();
+                                            "
+                                        />
+                                    </SettingRow>
+                                </UiBox>
+                            </div>
+                        </UiBox>
+
                         <!-- Stick settings -->
-                        <UiBox :title="$t('receiverStickRange')" class="col-span-6">
+                        <UiBox :title="$t('receiverStickRange')" type="neutral" collapsible class="col-span-6">
                             <div class="grid grid-cols-3 gap-2">
                                 <SettingColumn
                                     :label="$t('receiverStickMin')"
@@ -248,7 +356,7 @@
                         </UiBox>
 
                         <!-- Deadband settings -->
-                        <UiBox :title="$t('receiverDeadband')" class="col-span-6">
+                        <UiBox :title="$t('receiverDeadband')" type="neutral" collapsible class="col-span-6">
                             <div class="grid grid-cols-3 gap-2">
                                 <SettingColumn
                                     :label="$t('receiverDeadband')"
@@ -300,11 +408,11 @@
                     </div>
 
                     <!-- RC Smoothing -->
-                    <UiBox :title="$t('receiverRcSmoothing')" class="col-span-6">
+                    <UiBox :title="$t('receiverRcSmoothing')" type="neutral" collapsible class="col-span-6">
                         <SettingRow :label="$t('receiverRcSmoothing')">
                             <USwitch
                                 :model-value="rxConfig.rcSmoothing === 1"
-                                @update:model-value="(on) => (rxConfig.rcSmoothing = on ? 1 : 0)"
+                                @update:model-value="(on: boolean) => (rxConfig.rcSmoothing = on ? 1 : 0)"
                             />
                         </SettingRow>
                         <template v-if="rxConfig.rcSmoothing === 1">
@@ -481,10 +589,17 @@
                 @click="openSticksWindow"
                 v-if="showSticksButton"
                 variant="soft"
+                size="xs"
             />
-            <UButton :label="$t('receiverButtonBind')" @click="sendBind" v-if="showBindButton" variant="soft" />
-            <UFieldGroup size="sm" orientation="horizontal" class="flex!">
-                <UButton @click="saveConfig(needReboot)" :disabled="!dirty || isSaving">
+            <UButton
+                :label="$t('receiverButtonBind')"
+                @click="sendBind"
+                v-if="showBindButton"
+                variant="soft"
+                size="xs"
+            />
+            <UFieldGroup size="xs" orientation="horizontal" class="flex!">
+                <UButton @click="saveConfig(needReboot)" size="xs" :disabled="!dirty || isSaving">
                     {{ $t("receiverButtonSave") }}
                 </UButton>
                 <UDropdownMenu v-slot="{ open }" :items="saveMenuItems" :content="{ align: 'end', side: 'top' }">
@@ -499,53 +614,60 @@
     </BaseTab>
 </template>
 
-<script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
+<script setup lang="ts">
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
+import type Features from "@/js/Features";
+import type { StickWindowHost } from "./receiver-msp/stickWindow";
 import { useFlightControllerStore } from "@/stores/fc";
 import { useConnectionStore } from "@/stores/connection";
-import { useNavigationStore } from "@/stores/navigation";
+import { useDirtyState } from "@/composables/useDirtyState";
 import { useReboot } from "@/composables/useReboot";
-import { useInterval } from "../../composables/useInterval";
+import { useSaving, withSaveFailureMessage } from "@/composables/useSaving";
+import { runTabLoad } from "@/composables/useTabLoad";
+import { useReceiverData } from "@/composables/receiver/useReceiverData";
+import { useReceiverSave } from "@/composables/receiver/useReceiverSave";
+import { useReceiverCommands } from "@/composables/receiver/useReceiverCommands";
 import BaseTab from "./BaseTab.vue";
 import WikiButton from "@/components/elements/WikiButton.vue";
 import { i18n } from "@/js/localization";
-import MSP from "@/js/msp";
-import MSPCodes from "@/js/msp/MSPCodes";
-import { mspHelper } from "@/js/msp/MSPHelper";
-import GUI from "@/js/gui";
+import { entriesFromModeRanges } from "@/js/utils/modeRanges";
 import Model from "@/js/model";
-import RateCurve from "@/js/RateCurve";
+import RateCurve, { axisRateCurveParams, type CurrentRates } from "@/js/RateCurve";
 import { degToRad } from "@/js/utils/common";
-import { bit_check, bit_set, bit_clear } from "@/js/bit";
+import { bit_check } from "@/js/bit";
 import { get as getConfig, set as setConfig } from "@/js/ConfigStorage";
 import { updateTabList } from "@/js/utils/updateTabList";
 import { gui_log } from "@/js/gui_log";
-import DarkTheme from "@/js/DarkTheme";
-import windowWatcherUtil from "@/js/utils/window_watchers";
 import { API_VERSION_1_45, API_VERSION_1_47 } from "@/js/data_storage";
-import CryptoES from "crypto-es";
+import { MD5 } from "crypto-es";
 import semver from "semver";
 import * as THREE from "three";
 import * as d3 from "d3";
+import { useFeaturePort } from "@/composables/ports/useFeaturePort";
+import { usePortConflicts } from "@/composables/ports/usePortConflicts";
+import { PORT_NONE } from "@/composables/ports/portNames";
 import UiBox from "../elements/UiBox.vue";
 import SettingRow from "../elements/SettingRow.vue";
 import SettingColumn from "../elements/SettingColumn.vue";
+import { useNavigationStore } from "@/stores/navigation";
 
-const t = (key) => i18n.getMessage(key);
+const t = (key: string) => i18n.getMessage(key);
 const fcStore = useFlightControllerStore();
 const connectionStore = useConnectionStore();
 const navigationStore = useNavigationStore();
-const { reboot } = useReboot();
-const { addInterval, removeInterval } = useInterval();
+const { saveAndReboot, saveToEeprom } = useReboot();
+const { loadReceiverData, startModelPreviewPolling, startRcPolling, restartRcPolling } = useReceiverData();
+const { sendReceiverSettings, sendFeatureConfig } = useReceiverSave();
+const { bindReceiver, sendRawRx } = useReceiverCommands();
 
 // Template refs
-const modelPreviewContainer = ref(null);
-const modelCanvas = ref(null);
-const rxPlot = ref(null);
+const modelPreviewContainer = ref<HTMLElement | null>(null);
+const modelCanvas = ref<HTMLCanvasElement | null>(null);
+const rxPlot = ref<SVGSVGElement | null>(null);
 
 // Local state
 const needReboot = ref(false);
-const isSaving = ref(false);
+const { isSaving, runSave } = useSaving();
 const refreshRate = ref(50);
 const channelMapString = ref("");
 const elrsBindingPhrase = ref("");
@@ -555,15 +677,16 @@ const feedforwardManualMode = ref("0");
 const selectedRxMode = ref(0);
 
 // Model preview state
-let model = null;
-let rateCurve = null;
-let currentRates = null;
-let clock = null;
+let model: InstanceType<typeof Model> | null = null;
+let rateCurve: RateCurve | null = null;
+let currentRates: CurrentRates | null = null;
+let timer: THREE.Timer | null = null;
 let keepRendering = true;
-let animationFrameId = null;
+let animationFrameId: number | null = null;
 
-// D3 chart state
-let rxPlotData = [];
+// D3 chart state: one [sample, value] series per channel
+type PlotPoint = [sample: number, value: number];
+let rxPlotData: PlotPoint[][] = [];
 let samples = 0;
 
 // Meter scale for channel bars
@@ -611,14 +734,85 @@ const features = computed(() => fcStore.features);
 
 const rcDeadbandConfig = computed(() => fcStore.rcDeadbandConfig);
 
-// Dirty state tracking
-const savedSnapshot = ref("");
+// Failsafe / RX-loss indicator — detection lives in the fc store (reads the raw
+// armingDisableFlags bitmask). True when the FC is in failsafe or has lost the
+// RX link, so the banner/tint warn that channel values are failsafe output.
+const failsafeActive = computed(() => fcStore.failsafeActive);
 
-function takeSnapshot() {
+// From API 1.49 the port lives on the RX parameter group rather than the shared port function
+// mask, so it is assigned here instead of on the (by then read-only) ports tab.
+const {
+    available: rxPortAvailable,
+    writable: rxPortWritable,
+    options: rxPortOptions,
+    selectedIdentifier: rxPortIdentifier,
+    conflict: rxPortConflict,
+    selection: rxPortSelection,
+    load: loadRxPort,
+    write: writeRxPort,
+} = useFeaturePort({ setting: "rx_uart" });
+
+// MAX_TELEMETRY_PROVIDERS is a compile-time constant that never reaches the app, so each instance
+// is probed and only the ones this build has report themselves available. reactive() rather than a
+// destructure because the template iterates them.
+const telemetryPorts = [1, 2, 3].map((instance) =>
+    reactive(
+        useFeaturePort({
+            setting: `telemetry_${instance}_uart`,
+            baud: { setting: `telemetry_${instance}_baud` },
+            protocol: { setting: `telemetry_${instance}_protocol` },
+        }),
+    ),
+);
+
+const isTelemetryInstanceInUse = (port: (typeof telemetryPorts)[number]) =>
+    port.selectedIdentifier !== PORT_NONE || (port.selectedProtocol && port.selectedProtocol !== "NONE");
+
+// An unused instance is noise, so each one is revealed by the one before it filling in.
+const visibleTelemetryPorts = computed(() => {
+    const supported = telemetryPorts
+        .map((port, index) => ({ port, instance: index + 1 }))
+        .filter(({ port }) => port.available);
+    return supported.filter(
+        (entry, position) =>
+            position === 0 ||
+            isTelemetryInstanceInUse(supported[position - 1].port) ||
+            isTelemetryInstanceInUse(entry.port),
+    );
+});
+
+const {
+    available: rcdevicePortAvailable,
+    writable: rcdevicePortWritable,
+    options: rcdevicePortOptions,
+    selectedIdentifier: rcdevicePortIdentifier,
+    conflict: rcdevicePortConflict,
+    selection: rcdevicePortSelection,
+    load: loadRcdevicePort,
+    write: writeRcdevicePort,
+} = useFeaturePort({ setting: "rcdevice_uart" });
+
+// Every port this tab can assign, so a save can warn before taking one from another feature, or
+// before two of these features would land on the same port at once.
+const { confirmPortConflicts } = usePortConflicts(
+    () => [rxPortConflict, rcdevicePortConflict, ...telemetryPorts.map((port) => port.conflict)],
+    () => [rxPortSelection, rcdevicePortSelection, ...telemetryPorts.map((port) => port.selection)],
+);
+
+// Dirty state tracking
+/** @returns {string} serialized receiver state for dirty comparison */
+function serializeReceiverState() {
     return JSON.stringify({
         channelMap: channelMapString.value,
         rxMode: selectedRxMode.value,
         serialrxProvider: rxConfig.value?.serialrx_provider,
+        rxPortIdentifier: rxPortIdentifier.value,
+        rcdevicePortIdentifier: rcdevicePortIdentifier.value,
+        telemetryPorts: telemetryPorts.map((port) => [
+            port.selectedProtocol,
+            port.selectedIdentifier,
+            port.selectedBaud,
+        ]),
         rxSpiProtocol: rxConfig.value?.rxSpiProtocol,
         elrsModelId: rxConfig.value?.elrsModelId,
         stickMin: rxConfig.value?.stick_min,
@@ -634,7 +828,8 @@ function takeSnapshot() {
         deadband: rcDeadbandConfig.value?.deadband,
         yawDeadband: rcDeadbandConfig.value?.yaw_deadband,
         deadband3dThrottle: rcDeadbandConfig.value?.deadband3d_throttle,
-        featureMask: features.value?.features?._featureMask,
+        telemetryEnabled: features.value?.features?.isEnabled?.("TELEMETRY") ?? false,
+        rssiAdcEnabled: features.value?.features?.isEnabled?.("RSSI_ADC") ?? false,
         elrsBindingPhrase: elrsBindingPhrase.value,
         setpointManualMode: setpointManualMode.value,
         throttleManualMode: throttleManualMode.value,
@@ -642,9 +837,7 @@ function takeSnapshot() {
     });
 }
 
-const dirty = computed(() => {
-    return savedSnapshot.value !== "" && takeSnapshot() !== savedSnapshot.value;
-});
+const { dirty, markClean, takeSnapshot } = useDirtyState(serializeReceiverState);
 
 const saveMenuItems = computed(() => [
     [
@@ -664,7 +857,7 @@ const saveMenuItems = computed(() => [
 ]);
 
 // Decode HTML entities in translations (some use &lt; etc)
-function decodeHtmlEntities(text) {
+function decodeHtmlEntities(text: string) {
     if (!text) return text;
     const textarea = document.createElement("textarea");
     textarea.innerHTML = text;
@@ -674,9 +867,9 @@ function decodeHtmlEntities(text) {
 // RX Mode options (generated from features)
 const rxModeOptions = computed(() => {
     const options = [{ value: -1, label: decodeHtmlEntities(t("featureNone")) }];
-    if (features.value?.features?._features) {
+    if (features.value?.features?.getFeatures?.()) {
         // Features with mode === "select" are RX mode options
-        for (const feature of features.value.features._features) {
+        for (const feature of features.value.features.getFeatures()) {
             if (feature.mode === "select" && feature.group === "rxMode") {
                 options.push({
                     value: feature.bit,
@@ -771,6 +964,36 @@ const rssiChannelOptions = computed(() => {
 });
 
 // Channel bars data
+const auxModeRanges = computed(() => {
+    const rangesByAux = new Map<number, [number, number][]>();
+
+    for (const { entry } of entriesFromModeRanges(fcStore.modeRanges ?? [], fcStore.modeRangesExtra ?? [])) {
+        if (entry.kind !== "range" || entry.auxChannelIndex < 0) {
+            continue;
+        }
+
+        const ranges = rangesByAux.get(entry.auxChannelIndex) ?? [];
+        ranges.push(entry.sliderRange);
+        rangesByAux.set(entry.auxChannelIndex, ranges);
+    }
+
+    return rangesByAux;
+});
+
+function getAuxVisualState(auxIndex: number, value: number | undefined) {
+    const ranges = auxModeRanges.value.get(auxIndex);
+
+    if (!ranges?.length) {
+        return "unused";
+    }
+
+    const channelValue = Math.max(900, Math.min(2099, value ?? 1500));
+
+    const active = ranges.some(([start, end]) => channelValue >= start && channelValue < end);
+
+    return active ? "active" : "used";
+}
+
 const channelBars = computed(() => {
     const bars = [];
     const barNames = [t("controlAxisRoll"), t("controlAxisPitch"), t("controlAxisYaw"), t("controlAxisThrottle")];
@@ -781,14 +1004,22 @@ const channelBars = computed(() => {
     let auxIndex = 1;
     for (let i = 0; i < numBars; i++) {
         let name;
+        let auxChannelIndex = null;
         if (i < barNames.length) {
             name = barNames[i];
         } else {
+            auxChannelIndex = auxIndex - 1;
             name = t(`controlAxisAux${auxIndex++}`);
         }
         const value = channels[i] || 1500;
         const width = Math.max(0, Math.min(100, ((value - meterScale.min) / (meterScale.max - meterScale.min)) * 100));
-        bars.push({ name, value, width });
+        bars.push({
+            name,
+            value,
+            width,
+            isAux: auxChannelIndex !== null,
+            state: auxChannelIndex !== null ? getAuxVisualState(auxChannelIndex, value) : null,
+        });
     }
     return bars;
 });
@@ -809,12 +1040,13 @@ const plotLabels = computed(() => {
 });
 
 // ELRS Binding Phrase helpers
-function elrsBindingPhraseToBytes(text) {
+function elrsBindingPhraseToBytes(text: string) {
     let uidBytes = [0, 0, 0, 0, 0, 0];
     if (text) {
         const bindingPhraseFull = `-DMY_BINDING_PHRASE="${text}"`;
-        const hash = CryptoES.MD5(bindingPhraseFull).toString();
-        const bytes = hash.match(/.{1,2}/g).map((byte) => parseInt(byte, 16));
+        const hash = MD5(bindingPhraseFull).toString();
+        // An MD5 hex digest always splits into 16 pairs.
+        const bytes = (hash.match(/.{1,2}/g) ?? []).map((byte) => Number.parseInt(byte, 16));
         const view = new DataView(new ArrayBuffer(6));
         for (let i = 0; i < 6; i++) {
             view.setUint8(i, bytes[i]);
@@ -824,19 +1056,24 @@ function elrsBindingPhraseToBytes(text) {
     return uidBytes;
 }
 
-function lookupElrsBindingPhrase(uidString) {
-    const bindingPhraseMap = getConfig("binding_phrase_map")?.binding_phrase_map ?? {};
+type BindingPhraseMap = Record<string, string | undefined>;
+
+function lookupElrsBindingPhrase(uidString: string) {
+    const bindingPhraseMap = getConfig<BindingPhraseMap | undefined>("binding_phrase_map")?.binding_phrase_map ?? {};
     return bindingPhraseMap[uidString] ?? "";
 }
 
-function saveElrsBindingPhrase(uidString, bindingPhrase) {
-    const bindingPhraseMap = getConfig("binding_phrase_map")?.binding_phrase_map ?? {};
+function saveElrsBindingPhrase(uidString: string, bindingPhrase: string) {
+    const bindingPhraseMap = getConfig<BindingPhraseMap | undefined>("binding_phrase_map")?.binding_phrase_map ?? {};
     bindingPhraseMap[uidString] = bindingPhrase;
     setConfig({ binding_phrase_map: bindingPhraseMap });
 }
 
 // Channel map helpers
-function onChannelMapInput(event) {
+function onChannelMapInput(event: Event) {
+    if (!(event.target instanceof HTMLInputElement)) {
+        return;
+    }
     let val = event.target.value.toUpperCase();
     if (val.length > 8) {
         val = val.substring(0, 8);
@@ -903,7 +1140,7 @@ const channelMapPresetValue = computed({
 });
 
 // Feature toggles
-function toggleTelemetry(checked) {
+function toggleTelemetry(checked: boolean) {
     if (features.value?.features?.updateData) {
         features.value.features.updateData({ name: "TELEMETRY", checked });
         updateTabList(features.value.features);
@@ -911,7 +1148,7 @@ function toggleTelemetry(checked) {
     }
 }
 
-function toggleRssiAdc(checked) {
+function toggleRssiAdc(checked: boolean) {
     if (features.value?.features?.updateData) {
         features.value.features.updateData({ name: "RSSI_ADC", checked });
         needReboot.value = needReboot.value || checked !== undefined;
@@ -920,21 +1157,36 @@ function toggleRssiAdc(checked) {
 
 function onRxModeChange() {
     // Update feature mask based on selected RX mode
-    if (features.value?.features?._features) {
+    const featuresHelper = features.value?.features;
+    if (featuresHelper?.getFeatures?.()) {
         const selectedBit = selectedRxMode.value;
         // Clear all RX mode bits first, then set the selected one
-        for (const feature of features.value.features._features) {
+        for (const feature of featuresHelper.getFeatures()) {
             if (feature.mode === "select" && feature.group === "rxMode") {
-                features.value.features._featureMask = bit_clear(features.value.features._featureMask, feature.bit);
+                featuresHelper.disable(feature.name);
             }
         }
         // Set the selected RX mode bit (if not "None" which is -1)
         if (selectedBit !== -1) {
-            features.value.features._featureMask = bit_set(features.value.features._featureMask, selectedBit);
+            const selectedFeature = featuresHelper.findFeatureByBit(selectedBit);
+            if (selectedFeature) {
+                featuresHelper.enable(selectedFeature.name);
+            }
         }
-        updateTabList(features.value.features);
+        updateTabList(featuresHelper);
         needReboot.value = true;
     }
+}
+
+// Deliberately a change handler rather than a watcher: seeding the selection during load would
+// trip a watcher and leave the tab asking for a reboot every time it is opened.
+function onRxPortChange() {
+    needReboot.value = true;
+}
+
+// A telemetry or camera port only takes effect once the firmware opens it.
+function onSerialDeviceChange() {
+    needReboot.value = true;
 }
 
 // Actions
@@ -943,32 +1195,41 @@ function resetRefreshRate() {
 }
 
 function sendBind() {
-    MSP.send_message(MSPCodes.MSP2_BETAFLIGHT_BIND);
+    bindReceiver();
     gui_log(t("receiverButtonBindMessage"));
 }
 
 function openSticksWindow() {
-    const windowWidth = 370;
-    const windowHeight = 550;
+    const windowWidth = 420;
+    // Minimum that fits the initial state: gimbals + aux sliders + the expanded arming
+    // warning. Collapsing the warning or dismissing it leaves slack; resizing from there
+    // is left to the user rather than driven from the app.
+    const windowHeight = 600;
 
-    const rxFunction = (channels) => {
-        if (connectionStore.connectionValid && GUI.active_tab !== "cli") {
-            mspHelper.setRawRx(channels);
+    const rxFunction = (channels: number[]) => {
+        if (connectionStore.connectionValid && navigationStore.activeTab !== "cli") {
+            sendRawRx(channels);
             return true;
         }
         return false;
     };
 
-    const createdWindow = globalThis.open(
-        "/components/tabs/receiver-msp/receiver_msp.html",
+    // Resolve against the document base rather than the server root: the build uses
+    // `base: "./"`, so the app can be served from a sub-path (PR previews) or from a
+    // custom scheme (Tauri/Capacitor), where an absolute "/..." path would miss.
+    const stickWindowUrl = new URL("components/tabs/receiver-msp/receiver_msp.html", document.baseURI).href;
+
+    const createdWindow: (Window & StickWindowHost) | null = globalThis.open(
+        stickWindowUrl,
         "receiver_msp",
         `location=no,width=${windowWidth},height=${windowHeight + (screen.height - screen.availHeight)}`,
     );
     if (createdWindow) {
         createdWindow.setRawRx = rxFunction;
-        DarkTheme.isDarkThemeEnabled((isEnabled) => {
-            windowWatcherUtil.passValue(createdWindow, "darkTheme", isEnabled);
-        });
+        // The popup is a separate document with its own module graph, so it cannot import the
+        // initialised i18n instance — hand it over the same way as setRawRx above. This used to
+        // reach the popup as a `window.i18n` global, dropped in 58e84750 during the ESM cleanup.
+        createdWindow.i18n = i18n;
     }
 }
 
@@ -977,72 +1238,81 @@ async function refreshTab() {
     gui_log(t("receiverDataRefreshed"));
 }
 
+// Find the rx mode bit for the currently enabled "select"/"rxMode" feature, or -1 if none is.
+function findSelectedRxMode(featuresApi: Features) {
+    for (const feature of featuresApi.getFeatures()) {
+        if (feature.mode === "select" && feature.group === "rxMode" && featuresApi.isEnabled(feature.name)) {
+            return feature.bit;
+        }
+    }
+    return -1;
+}
+
+// Look up a stored ELRS binding phrase for the FC's current UID, if any.
+function findElrsBindingPhrase(elrsUid: number[] | undefined) {
+    if (!elrsUid) {
+        return null;
+    }
+    return lookupElrsBindingPhrase(elrsUid.join(","));
+}
+
 // Load configuration
 async function loadConfig() {
-    try {
-        await MSP.promise(MSPCodes.MSP_FEATURE_CONFIG);
-        await MSP.promise(MSPCodes.MSP_RC);
-        await MSP.promise(MSPCodes.MSP_RSSI_CONFIG);
-        await MSP.promise(MSPCodes.MSP_RC_TUNING);
-        await MSP.promise(MSPCodes.MSP_RX_MAP);
-        await MSP.promise(MSPCodes.MSP_RC_DEADBAND);
-        await MSP.promise(MSPCodes.MSP_RX_CONFIG);
-        await MSP.promise(MSPCodes.MSP_MIXER_CONFIG);
-
-        // Update local state from FC
-        updateChannelMapFromRcMap();
-
-        // Initialize selectedRxMode from feature mask
-        if (features.value?.features?._features) {
-            const featureMask = features.value.features._featureMask;
-            let foundRxMode = -1;
-            for (const feature of features.value.features._features) {
-                if (feature.mode === "select" && feature.group === "rxMode") {
-                    if (bit_check(featureMask, feature.bit)) {
-                        foundRxMode = feature.bit;
-                        break;
-                    }
-                }
+    await runTabLoad(
+        async () => {
+            await loadReceiverData();
+            await loadRxPort();
+            await loadRcdevicePort();
+            for (const port of telemetryPorts) {
+                await port.load();
             }
-            selectedRxMode.value = foundRxMode;
-        }
 
-        // Load ELRS binding phrase if applicable
-        if (elrsBindingPhraseEnabled.value && rxConfig.value?.elrsUid) {
-            const uidString = rxConfig.value.elrsUid.join(",");
-            const storedPhrase = lookupElrsBindingPhrase(uidString);
+            // Update local state from FC
+            updateChannelMapFromRcMap();
+
+            // Initialize selectedRxMode from feature mask
+            if (features.value?.features?.getFeatures?.()) {
+                selectedRxMode.value = findSelectedRxMode(features.value.features);
+            }
+
+            // Load ELRS binding phrase if applicable
+            const storedPhrase = elrsBindingPhraseEnabled.value ? findElrsBindingPhrase(rxConfig.value?.elrsUid) : null;
             if (storedPhrase) {
                 elrsBindingPhrase.value = storedPhrase;
             }
-        }
 
-        // Set RC smoothing modes based on cutoff values
-        setpointManualMode.value = rxConfig.value?.rcSmoothingSetpointCutoff === 0 ? "0" : "1";
-        if (showThrottleSmoothingOptions.value) {
-            throttleManualMode.value = rxConfig.value?.rcSmoothingThrottleCutoff === 0 ? "0" : "1";
-        } else {
-            feedforwardManualMode.value = rxConfig.value?.rcSmoothingFeedforwardCutoff === 0 ? "0" : "1";
-        }
+            // Set RC smoothing modes based on cutoff values
+            setpointManualMode.value = rxConfig.value?.rcSmoothingSetpointCutoff === 0 ? "0" : "1";
+            if (showThrottleSmoothingOptions.value) {
+                throttleManualMode.value = rxConfig.value?.rcSmoothingThrottleCutoff === 0 ? "0" : "1";
+            } else {
+                feedforwardManualMode.value = rxConfig.value?.rcSmoothingFeedforwardCutoff === 0 ? "0" : "1";
+            }
 
-        // Load saved refresh rate
-        const savedRate = getConfig("rx_refresh_rate");
-        if (savedRate?.rx_refresh_rate) {
-            refreshRate.value = savedRate.rx_refresh_rate;
-        }
+            // Load saved refresh rate
+            const savedRate = getConfig<number | undefined>("rx_refresh_rate");
+            if (savedRate?.rx_refresh_rate) {
+                refreshRate.value = savedRate.rx_refresh_rate;
+            }
 
-        needReboot.value = false;
-        savedSnapshot.value = takeSnapshot();
-    } catch (e) {
-        console.error("Failed to load Receiver configuration", e);
-    }
+            needReboot.value = false;
+            markClean();
+        },
+        (e) => console.error("Failed to load Receiver configuration", e),
+    );
 }
 
 // Save configuration
-async function saveConfig(withReboot = false) {
-    if (isSaving.value) return;
-    isSaving.value = true;
+const saveConfig = (withReboot = false) =>
+    runSave(async () => {
+        // Warn before a pick that would take a port from another feature; a cancel here leaves the
+        // save untouched, before anything has been written to the FC.
+        if (!(await confirmPortConflicts())) {
+            return;
+        }
 
-    try {
+        const savedSnapshot = takeSnapshot();
+
         // Update RC_MAP from channel map string
         validateChannelMap();
 
@@ -1069,36 +1339,36 @@ async function saveConfig(withReboot = false) {
         }
 
         // Save sequence
-        await MSP.promise(MSPCodes.MSP_SET_RX_MAP, mspHelper.crunch(MSPCodes.MSP_SET_RX_MAP));
-        await MSP.promise(MSPCodes.MSP_SET_RSSI_CONFIG, mspHelper.crunch(MSPCodes.MSP_SET_RSSI_CONFIG));
-        await MSP.promise(MSPCodes.MSP_SET_RC_DEADBAND, mspHelper.crunch(MSPCodes.MSP_SET_RC_DEADBAND));
-        await MSP.promise(MSPCodes.MSP_SET_RX_CONFIG, mspHelper.crunch(MSPCodes.MSP_SET_RX_CONFIG));
+        await sendReceiverSettings();
 
-        if (withReboot) {
-            await MSP.promise(MSPCodes.MSP_SET_FEATURE_CONFIG, mspHelper.crunch(MSPCodes.MSP_SET_FEATURE_CONFIG));
-            await new Promise((resolve) => {
-                mspHelper.writeConfiguration(true, () => {
-                    navigationStore.cleanup(() => {
-                        reboot();
-                        resolve();
-                    });
-                });
-            });
-        } else {
-            await new Promise((resolve) => {
-                mspHelper.writeConfiguration(false, resolve);
-            });
-            gui_log(t("receiverConfigSaved") || "Configuration saved");
-            savedSnapshot.value = takeSnapshot();
+        // rx_uart shares the RX parameter group with everything MSP_SET_RX_CONFIG just wrote,
+        // and the persist below serialises that group, so this has to sit between the two.
+        // Throwing skips the persist, so a refused port leaves nothing written to EEPROM.
+        try {
+            await writeRxPort();
+            await writeRcdevicePort();
+            for (const port of telemetryPorts) {
+                await port.write();
+            }
+        } catch (error) {
+            throw withSaveFailureMessage(error, t("receiverSerialPortSaveFailed"));
         }
 
+        // Unconditional: the telemetry feature switch lives on this tab, and a mask change has
+        // to reach the FC whether or not the save also reboots.
+        await sendFeatureConfig();
+
+        if (withReboot) {
+            await saveAndReboot();
+        } else {
+            await saveToEeprom();
+            gui_log(t("receiverConfigSaved") || "Configuration saved");
+        }
+
+        markClean(savedSnapshot);
+
         needReboot.value = false;
-    } catch (e) {
-        console.error("Failed to save configuration", e);
-    } finally {
-        isSaving.value = false;
-    }
-}
+    });
 
 // Model preview
 function initModelPreview() {
@@ -1115,51 +1385,26 @@ function handleModelResize() {
     }
 }
 
-function renderModel() {
+function renderModel(timestamp?: number) {
     if (!keepRendering) return;
     animationFrameId = requestAnimationFrame(renderModel);
 
-    if (!clock) {
-        clock = new THREE.Clock();
+    if (!timer) {
+        timer = new THREE.Timer();
+        timer.connect(document);
     }
+    timer.update(timestamp);
 
     const channels = rc.value?.channels;
     if (channels?.[0] && channels?.[1] && channels?.[2] && model && rateCurve && currentRates) {
-        const delta = clock.getDelta();
+        const delta = timer.getDelta();
 
         const roll =
-            delta *
-            rateCurve.rcCommandRawToDegreesPerSecond(
-                channels[0],
-                currentRates.roll_rate,
-                currentRates.rc_rate,
-                currentRates.rc_expo,
-                currentRates.superexpo,
-                currentRates.deadband,
-                currentRates.roll_rate_limit,
-            );
+            delta * rateCurve.rcCommandRawToDegreesPerSecond(channels[0], axisRateCurveParams(currentRates, "roll"));
         const pitch =
-            delta *
-            rateCurve.rcCommandRawToDegreesPerSecond(
-                channels[1],
-                currentRates.pitch_rate,
-                currentRates.rc_rate_pitch,
-                currentRates.rc_pitch_expo,
-                currentRates.superexpo,
-                currentRates.deadband,
-                currentRates.pitch_rate_limit,
-            );
+            delta * rateCurve.rcCommandRawToDegreesPerSecond(channels[1], axisRateCurveParams(currentRates, "pitch"));
         const yaw =
-            delta *
-            rateCurve.rcCommandRawToDegreesPerSecond(
-                channels[2],
-                currentRates.yaw_rate,
-                currentRates.rc_rate_yaw,
-                currentRates.rc_yaw_expo,
-                currentRates.superexpo,
-                currentRates.yawDeadband,
-                currentRates.yaw_rate_limit,
-            );
+            delta * rateCurve.rcCommandRawToDegreesPerSecond(channels[2], axisRateCurveParams(currentRates, "yaw"));
 
         model.rotateBy(-degToRad(pitch), -degToRad(yaw), -degToRad(roll));
     }
@@ -1190,8 +1435,8 @@ function updateRxPlot() {
 
         // Remove old data
         while (rxPlotData[0]?.length > 300) {
-            for (let i = 0; i < rxPlotData.length; i++) {
-                rxPlotData[i].shift();
+            for (const series of rxPlotData) {
+                series.shift();
             }
         }
     }
@@ -1209,39 +1454,35 @@ function updateRxPlot() {
         .range([0, width]);
     const heightScale = d3.scaleLinear().domain([800, 2200]).range([height, 0]);
 
-    const xGrid = d3.axisBottom().scale(widthScale).tickSize(-height).tickFormat("");
-    const yGrid = d3.axisLeft().scale(heightScale).tickSize(-width).tickFormat("");
-    const xAxis = d3.axisBottom().scale(widthScale);
-    const yAxis = d3.axisLeft().scale(heightScale);
+    // Grid lines are ticks with blank labels.
+    const blankLabel = () => "";
+    const xGrid = d3.axisBottom(widthScale).tickSize(-height).tickFormat(blankLabel);
+    const yGrid = d3.axisLeft(heightScale).tickSize(-width).tickFormat(blankLabel);
+    const xAxis = d3.axisBottom(widthScale);
+    const yAxis = d3.axisLeft(heightScale);
 
     const line = d3
-        .line()
+        .line<PlotPoint>()
         .x((d) => widthScale(d[0]))
         .y((d) => heightScale(d[1]));
 
-    svg.select(".x.grid-display").call(xGrid);
-    svg.select(".y.grid-display").call(yGrid);
-    svg.select(".x.axis-display").call(xAxis);
-    svg.select(".y.axis-display").call(yAxis);
+    svg.select<SVGGElement>(".x.grid-display").call(xGrid);
+    svg.select<SVGGElement>(".y.grid-display").call(yGrid);
+    svg.select<SVGGElement>(".x.axis-display").call(xAxis);
+    svg.select<SVGGElement>(".y.axis-display").call(yAxis);
 
     const data = svg.select("g.data");
-    const lines = data.selectAll("path").data(rxPlotData);
+    const lines = data.selectAll<SVGPathElement, PlotPoint[]>("path").data(rxPlotData);
     lines.enter().append("path").attr("class", "line").merge(lines).attr("d", line);
     lines.exit().remove();
 
     samples++;
 }
 
-// RC Data polling
-function getRcData() {
-    MSP.send_message(MSPCodes.MSP_RC, false, false, updateRxPlot);
-}
-
 // Watch refresh rate changes
 watch(refreshRate, (newRate) => {
     setConfig({ rx_refresh_rate: newRate });
-    removeInterval("receiver_pull");
-    addInterval("receiver_pull", getRcData, newRate, true);
+    restartRcPolling(newRate, updateRxPlot);
 });
 
 // Lifecycle
@@ -1257,20 +1498,11 @@ onMounted(async () => {
     renderModel();
 
     // Start model preview polling
-    addInterval(
-        "receiver_pull_for_model_preview",
-        () => {
-            MSP.send_message(MSPCodes.MSP_RC, false, false);
-        },
-        33,
-        false,
-    );
+    startModelPreviewPolling();
 
     // Setup and start RC plot
     setupRxPlot();
-    addInterval("receiver_pull", getRcData, refreshRate.value, true);
-
-    GUI.content_ready();
+    startRcPolling(refreshRate.value, updateRxPlot);
 });
 
 onUnmounted(() => {
@@ -1282,258 +1514,287 @@ onUnmounted(() => {
     if (model?.dispose) {
         model.dispose();
     }
+    timer?.dispose();
+    timer = null;
 });
 </script>
 
-<style lang="less" scoped>
-.content_wrapper {
-    padding-bottom: 60px;
-}
+<style lang="less">
+.tab-receiver {
+    .content_wrapper {
+        padding-bottom: 60px;
+    }
 
-.bars {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    font-weight: bold;
-    ul {
+    .bars {
         display: flex;
+        flex-direction: column;
         gap: 0.5rem;
-        &:nth-of-type(1) {
-            :deep([data-slot="indicator"]) {
-                background-color: #f1453d;
+        font-weight: bold;
+        ul {
+            display: flex;
+            gap: 0.5rem;
+            &:nth-of-type(1) {
+                [data-slot="indicator"] {
+                    background-color: var(--color-channel-1);
+                }
+            }
+            &:nth-of-type(2) {
+                [data-slot="indicator"] {
+                    background-color: var(--color-channel-2);
+                }
+            }
+            &:nth-of-type(3) {
+                [data-slot="indicator"] {
+                    background-color: var(--color-channel-3);
+                }
+            }
+            &:nth-of-type(4) {
+                [data-slot="indicator"] {
+                    background-color: var(--color-channel-4);
+                }
+            }
+            &:nth-of-type(5) {
+                [data-slot="indicator"] {
+                    background-color: var(--color-channel-5);
+                }
+            }
+            &:nth-of-type(6) {
+                [data-slot="indicator"] {
+                    background-color: var(--color-channel-6);
+                }
+            }
+            &:nth-of-type(7) {
+                [data-slot="indicator"] {
+                    background-color: var(--color-channel-7);
+                }
+            }
+            &:nth-of-type(8) {
+                [data-slot="indicator"] {
+                    background-color: var(--color-channel-8);
+                }
+            }
+            &:nth-of-type(9) {
+                [data-slot="indicator"] {
+                    background-color: var(--color-channel-9);
+                }
+            }
+            &:nth-of-type(10) {
+                [data-slot="indicator"] {
+                    background-color: var(--color-channel-10);
+                }
+            }
+            &:nth-of-type(11) {
+                [data-slot="indicator"] {
+                    background-color: var(--color-channel-11);
+                }
+            }
+            &:nth-of-type(12) {
+                [data-slot="indicator"] {
+                    background-color: var(--color-channel-12);
+                }
+            }
+            &:nth-of-type(13) {
+                [data-slot="indicator"] {
+                    background-color: var(--color-channel-13);
+                }
+            }
+            &:nth-of-type(14) {
+                [data-slot="indicator"] {
+                    background-color: var(--color-channel-14);
+                }
+            }
+            &:nth-of-type(15) {
+                [data-slot="indicator"] {
+                    background-color: var(--color-channel-15);
+                }
+            }
+            &:nth-of-type(16) {
+                [data-slot="indicator"] {
+                    background-color: var(--color-channel-16);
+                }
             }
         }
-        &:nth-of-type(2) {
-            :deep([data-slot="indicator"]) {
-                background-color: #673fb4;
+        /* Same specificity as the per-channel colours above, so these win by coming after them. */
+        ul.aux-unused {
+            [data-slot="indicator"] {
+                background-color: var(--color-channel-aux-unused);
             }
         }
-        &:nth-of-type(3) {
-            :deep([data-slot="indicator"]) {
-                background-color: #2b98f0;
+
+        ul.aux-used {
+            [data-slot="indicator"] {
+                background-color: var(--color-channel-aux-used);
             }
         }
-        &:nth-of-type(4) {
-            :deep([data-slot="indicator"]) {
-                background-color: #1fbcd2;
+
+        ul.aux-active {
+            [data-slot="indicator"] {
+                background-color: var(--color-channel-aux-active);
+                box-shadow: 0 0 7px rgba(34, 211, 238, 0.65);
             }
         }
-        &:nth-of-type(5) {
-            :deep([data-slot="indicator"]) {
-                background-color: #159588;
-            }
+
+        .name {
+            width: 5rem;
+            text-align: end;
         }
-        &:nth-of-type(6) {
-            :deep([data-slot="indicator"]) {
-                background-color: #50ae55;
-            }
+        .meter {
+            width: 100%;
         }
-        &:nth-of-type(7) {
-            :deep([data-slot="indicator"]) {
-                background-color: #cdda49;
-            }
-        }
-        &:nth-of-type(8) {
-            :deep([data-slot="indicator"]) {
-                background-color: #fdc02f;
-            }
-        }
-        &:nth-of-type(9) {
-            :deep([data-slot="indicator"]) {
-                background-color: #fc5830;
-            }
-        }
-        &:nth-of-type(10) {
-            :deep([data-slot="indicator"]) {
-                background-color: #785549;
-            }
-        }
-        &:nth-of-type(11) {
-            :deep([data-slot="indicator"]) {
-                background-color: #9e9e9e;
-            }
-        }
-        &:nth-of-type(12) {
-            :deep([data-slot="indicator"]) {
-                background-color: #617d8a;
-            }
-        }
-        &:nth-of-type(13) {
-            :deep([data-slot="indicator"]) {
-                background-color: #cf267d;
-            }
-        }
-        &:nth-of-type(14) {
-            :deep([data-slot="indicator"]) {
-                background-color: #7a1464;
-            }
-        }
-        &:nth-of-type(15) {
-            :deep([data-slot="indicator"]) {
-                background-color: #3a7a14;
-            }
-        }
-        &:nth-of-type(16) {
-            :deep([data-slot="indicator"]) {
-                background-color: #14407a;
-            }
-        }
-    }
-    .name {
-        width: 5rem;
-        text-align: right;
-    }
-    .meter {
-        width: 100%;
-    }
-    .meter-bar {
-        position: relative;
-        container-type: inline-size;
-        width: 100%;
-        height: 1rem;
-        border: 1px solid var(--surface-500);
-        background-color: var(--surface-200);
-        border-radius: 0.3rem;
-        .label {
-            position: absolute;
-            width: 50px;
-            text-align: center;
-            left: calc(50cqi - 25px);
-            color: var(--text);
-        }
-        .fill {
+        .meter-bar {
             position: relative;
-            overflow: hidden;
-            border-radius: 0.3rem;
-            width: 50%;
+            container-type: inline-size;
+            width: 100%;
             height: 1rem;
-            background-color: var(--primary-500);
+            border: 1px solid var(--surface-500);
+            background-color: var(--surface-200);
+            border-radius: 0.3rem;
             .label {
-                color: white;
+                position: absolute;
+                width: 50px;
+                text-align: center;
+                inset-inline-start: calc(50cqi - 25px);
+                color: var(--text);
+            }
+            .fill {
+                position: relative;
+                overflow: hidden;
+                border-radius: 0.3rem;
+                width: 50%;
+                height: 1rem;
+                background-color: var(--primary-500);
+                .label {
+                    color: white;
+                }
             }
         }
     }
-}
 
-.graphAndLabel {
-    display: flex;
-    flex-wrap: nowrap;
-    gap: 0.5rem;
-}
+    .graphAndLabel {
+        display: flex;
+        flex-wrap: nowrap;
+        gap: 0.5rem;
+    }
 
-:deep(svg:not(.iconify)) {
-    width: 100%;
-    height: 100%;
-}
+    svg:not(.iconify) {
+        width: 100%;
+        height: 100%;
+    }
 
-.plot_control {
-    width: 14rem;
-    margin: 0;
-    border-top-right-radius: 3px;
-    border-bottom-right-radius: 3px;
-    .value {
-        padding: 4px;
-        color: #fff;
-        border-radius: 3px;
+    .plot_control {
+        width: 14rem;
+        margin: 0;
+        border-start-end-radius: 3px;
+        border-end-end-radius: 3px;
+        .value {
+            padding: 4px;
+            color: white;
+            border-radius: 3px;
+        }
+        .ch1 {
+            background-color: var(--color-channel-1);
+        }
+        .ch2 {
+            background-color: var(--color-channel-2);
+        }
+        .ch3 {
+            background-color: var(--color-channel-3);
+        }
+        .ch4 {
+            background-color: var(--color-channel-4);
+        }
     }
-    .ch1 {
-        background-color: #f1453d;
-    }
-    .ch2 {
-        background-color: #673fb4;
-    }
-    .ch3 {
-        background-color: #2b98f0;
-    }
-    .ch4 {
-        background-color: #1fbcd2;
-    }
-}
 
-:deep(#RX_plot) {
-    height: 208px;
-    color: var(--text);
+    /* D3 positions every tick label in absolute coordinates and anchors the y labels with
+   text-anchor: end. Under an RTL locale the inherited direction flips that anchor, so the
+   labels spill into the plot area. The graph is numeric, so keep it LTR in every locale. */
+
+    #RX_plot {
+        direction: ltr;
+        height: 208px;
+        color: var(--text);
+        .line {
+            &:nth-child(1) {
+                stroke: var(--color-channel-1);
+            }
+            &:nth-child(2) {
+                stroke: var(--color-channel-2);
+            }
+            &:nth-child(3) {
+                stroke: var(--color-channel-3);
+            }
+            &:nth-child(4) {
+                stroke: var(--color-channel-4);
+            }
+            &:nth-child(5) {
+                stroke: var(--color-channel-5);
+            }
+            &:nth-child(6) {
+                stroke: var(--color-channel-6);
+            }
+            &:nth-child(7) {
+                stroke: var(--color-channel-7);
+            }
+            &:nth-child(8) {
+                stroke: var(--color-channel-8);
+            }
+            &:nth-child(9) {
+                stroke: var(--color-channel-9);
+            }
+            &:nth-child(10) {
+                stroke: var(--color-channel-10);
+            }
+            &:nth-child(11) {
+                stroke: var(--color-channel-11);
+            }
+            &:nth-child(12) {
+                stroke: var(--color-channel-12);
+            }
+            &:nth-child(13) {
+                stroke: var(--color-channel-13);
+            }
+            &:nth-child(14) {
+                stroke: var(--color-channel-14);
+            }
+            &:nth-child(15) {
+                stroke: var(--color-channel-15);
+            }
+            &:nth-child(16) {
+                stroke: var(--color-channel-16);
+            }
+        }
+    }
+
+    .grid-display {
+        .tick {
+            stroke: silver;
+            stroke-width: 1px;
+            shape-rendering: crispEdges;
+        }
+        path {
+            stroke-width: 0;
+        }
+    }
+
     .line {
-        &:nth-child(1) {
-            stroke: #f1453d;
-        }
-        &:nth-child(2) {
-            stroke: #673fb4;
-        }
-        &:nth-child(3) {
-            stroke: #2b98f0;
-        }
-        &:nth-child(4) {
-            stroke: #1fbcd2;
-        }
-        &:nth-child(5) {
-            stroke: #159588;
-        }
-        &:nth-child(6) {
-            stroke: #50ae55;
-        }
-        &:nth-child(7) {
-            stroke: #cdda49;
-        }
-        &:nth-child(8) {
-            stroke: #fdc02f;
-        }
-        &:nth-child(9) {
-            stroke: #fc5830;
-        }
-        &:nth-child(10) {
-            stroke: #785549;
-        }
-        &:nth-child(11) {
-            stroke: #9e9e9e;
-        }
-        &:nth-child(12) {
-            stroke: #7a6614;
-        }
-        &:nth-child(13) {
-            stroke: #cf267d;
-        }
-        &:nth-child(14) {
-            stroke: #7a1464;
-        }
-        &:nth-child(15) {
-            stroke: #3a7a14;
-        }
-        &:nth-child(16) {
-            stroke: #14407a;
-        }
+        stroke-width: 2px;
+        fill: none;
     }
-}
 
-:deep(.grid-display) {
-    .tick {
-        stroke: silver;
-        stroke-width: 1px;
-        shape-rendering: crispEdges;
+    text {
+        stroke: none;
+        fill: var(--text);
+        font-size: 10px;
     }
-    path {
-        stroke-width: 0;
-    }
-}
 
-:deep(.line) {
-    stroke-width: 2px;
-    fill: none;
-}
-
-:deep(text) {
-    stroke: none;
-    fill: var(--text);
-    font-size: 10px;
-}
-
-@media all and (max-width: 1055px) {
-    :deep(.grid-box) {
-        &.col5 {
-            grid-template-columns: 1fr !important;
-        }
-        &.col6 {
-            column-gap: 0.5rem;
+    @media all and (max-width: 1055px) {
+        .grid-box {
+            &.col5 {
+                grid-template-columns: 1fr !important;
+            }
+            &.col6 {
+                column-gap: 0.5rem;
+            }
         }
     }
 }

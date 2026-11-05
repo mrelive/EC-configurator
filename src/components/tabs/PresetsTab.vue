@@ -33,7 +33,7 @@
 
             <div v-else-if="store.hasLoadError" class="p-5">
                 <h3 v-html="$t('presetsLoadError')"></h3>
-                <UButton :label="$t('presetsReload')" class="mt-2" @click="reloadPresets" />
+                <UButton :label="$t('presetsReload')" class="mt-2" size="xs" @click="reloadPresets" />
             </div>
 
             <div v-else>
@@ -106,18 +106,24 @@
                 <UButton
                     :label="$t('presetsButtonCancel')"
                     :disabled="!store.canApply"
+                    size="xs"
                     @click="store.clearPickedPresets()"
                     color="error"
                     variant="soft"
                 />
-                <UButton :label="$t('presetsButtonSave')" :disabled="!store.canApply" @click="applyPickedPresets()" />
+                <UButton
+                    :label="$t('presetsButtonSave')"
+                    :disabled="!store.canApply"
+                    size="xs"
+                    @click="applyPickedPresets()"
+                />
             </div>
         </div>
 
         <PresetDetailsDialog
             :open="store.detailsState.open"
-            :preset="store.selectedPreset"
-            :repository="store.selectedPresetRepository"
+            :preset="store.selectedPreset ?? undefined"
+            :repository="store.selectedPresetRepository ?? undefined"
             :loading="store.detailsState.loading"
             :error="store.detailsState.error"
             :show-cli="store.detailsState.showCli"
@@ -131,9 +137,11 @@
             @apply="applyPresetSelection"
             @close="store.closePresetDetails()"
             @toggle-cli-visible="store.setDetailsCliVisible($event)"
-            @toggle-option="store.setOptionChecked($event.optionId, $event.checked)"
+            @toggle-option="
+                $event.checked ? store.selectOption($event.optionId) : store.deselectOption($event.optionId)
+            "
             @select-exclusive-option="store.setExclusiveOption($event.groupOptionIds, $event.selectedOptionId)"
-            @toggle-favorite="store.toggleFavorite(store.selectedPreset, store.selectedPresetRepository)"
+            @toggle-favorite="toggleSelectedPresetFavorite"
             @options-expanded-change="store.setOptionsExpanded($event)"
         />
 
@@ -149,45 +157,62 @@
             @deactivate-source="handleDeactivateSource"
         />
 
-        <dialog ref="progressDialogRef" class="w-[300px] h-fit p-6" @cancel.prevent>
-            <div class="text-lg mb-2" v-html="$t('presetsApplyingPresets')"></div>
-            <div class="text-sm text-(--ui-text-muted)" v-html="$t('presetsPleaseWait')"></div>
-            <UProgress :model-value="store.applyState.progress" :max="100" class="mt-3" />
-        </dialog>
-
-        <dialog
-            ref="cliErrorsDialogRef"
-            class="w-[600px] max-w-[calc(100vw-2rem)] h-fit p-6"
-            @close="handleCliErrorsDialogClose"
-            @cancel.prevent
+        <UModal
+            :open="store.applyState.progressDialogOpen"
+            :close="false"
+            :dismissible="false"
+            :ui="{ content: 'w-[300px]' }"
         >
-            <div class="text-lg mb-2" v-html="$t('presetsCliErrorsWarning')"></div>
-            <div class="presets_cli_background">
-                <div class="presets_cli_window">
-                    <div class="presets_cli_wrapper">
-                        <template v-for="(failure, idx) in store.applyState.cliErrors" :key="idx">
-                            <div>{{ failure.command }}</div>
-                            <div
-                                v-for="(line, lineIdx) in failure.response"
-                                :key="lineIdx"
-                                :class="{ error_message: line.startsWith('###ERROR') }"
-                            >
-                                {{ line }}
-                            </div>
-                        </template>
+            <template #body>
+                <div class="text-lg mb-2" v-html="$t('presetsApplyingPresets')"></div>
+                <div class="text-sm text-(--ui-text-muted)" v-html="$t('presetsPleaseWait')"></div>
+                <UProgress :model-value="store.applyState.progress" :max="100" class="mt-3" />
+            </template>
+        </UModal>
+
+        <UModal
+            :open="store.applyState.cliErrorsDialogOpen"
+            :close="false"
+            :dismissible="false"
+            :ui="{ content: 'w-[600px] max-w-[calc(100vw-2rem)]' }"
+        >
+            <template #title>
+                <span v-html="$t('presetsCliErrorsWarning')"></span>
+            </template>
+            <template #body>
+                <div class="presets_cli_background">
+                    <div class="presets_cli_window">
+                        <div class="presets_cli_wrapper">
+                            <template v-for="(failure, idx) in store.applyState.cliErrors" :key="idx">
+                                <div>{{ failure.command }}</div>
+                                <div
+                                    v-for="(line, lineIdx) in failure.response"
+                                    :key="lineIdx"
+                                    :class="{ error_message: line.startsWith('###ERROR') }"
+                                >
+                                    {{ line }}
+                                </div>
+                            </template>
+                        </div>
                     </div>
                 </div>
-            </div>
-            <div class="flex gap-2 justify-end mt-3">
-                <UButton :label="$t('presetsButtonCancel')" variant="outline" @click="closeCliErrorsWithoutSaving" />
-                <UButton :label="$t('presetsSaveAnyway')" @click="saveAnywayAfterCliErrors" />
-            </div>
-        </dialog>
+            </template>
+            <template #footer>
+                <div class="flex justify-end gap-2 w-full">
+                    <UButton
+                        :label="$t('presetsButtonCancel')"
+                        variant="outline"
+                        size="xs"
+                        @click="closeCliErrorsWithoutSaving"
+                    />
+                    <UButton :label="$t('presetsSaveAnyway')" size="xs" @click="saveAnywayAfterCliErrors" />
+                </div>
+            </template>
+        </UModal>
     </BaseTab>
 </template>
 
-<script setup>
-import { nextTick, ref, watch } from "vue";
+<script setup lang="ts">
 import BaseTab from "./BaseTab.vue";
 import UiBox from "@/components/elements/UiBox.vue";
 import WikiButton from "@/components/elements/WikiButton.vue";
@@ -199,14 +224,14 @@ import { usePresetsStore } from "@/stores/presets";
 import {
     MIN_FC_VERSION_FOR_MSP_CLI,
     cancelScheduledReconnect,
+    isConnectionClosedError,
     isMspCliSupported,
     saveAndReconnect,
     scheduleReconnect,
     useMspCliSession,
 } from "@/composables/useMspCliSession";
 import { useDialog } from "@/composables/useDialog";
-import GUI from "@/js/gui";
-import FC from "@/js/fc";
+import { useFlightControllerStore } from "@/stores/fc";
 import { escapeHtml } from "@/js/utils/common";
 import { useConnectionStore } from "@/stores/connection";
 import FileSystem from "@/js/FileSystem";
@@ -216,13 +241,12 @@ import { update_sensor_status } from "@/js/serial_backend";
 
 const store = usePresetsStore();
 const connectionStore = useConnectionStore();
+const fcStore = useFlightControllerStore();
 const dialog = useDialog();
 const cliSession = useMspCliSession();
-const progressDialogRef = ref(null);
-const cliErrorsDialogRef = ref(null);
 const searchPlaceholder = 'example: "karate race", or "5\'\' freestyle"';
 
-function reportProgress({ index, total }) {
+function reportProgress({ index, total }: { index: number; total: number }) {
     if (total <= 0) {
         store.updateApplyProgress(100);
         return;
@@ -230,43 +254,8 @@ function reportProgress({ index, total }) {
     store.updateApplyProgress(Math.round((index / total) * 100));
 }
 
-watch(
-    () => store.applyState.progressDialogOpen,
-    async (isOpen) => {
-        await nextTick();
-
-        if (!progressDialogRef.value) {
-            return;
-        }
-
-        if (isOpen && !progressDialogRef.value.open) {
-            progressDialogRef.value.showModal();
-        } else if (!isOpen && progressDialogRef.value.open) {
-            progressDialogRef.value.close();
-        }
-    },
-);
-
-watch(
-    () => store.applyState.cliErrorsDialogOpen,
-    async (isOpen) => {
-        await nextTick();
-
-        if (!cliErrorsDialogRef.value) {
-            return;
-        }
-
-        if (isOpen && !cliErrorsDialogRef.value.open) {
-            cliErrorsDialogRef.value.showModal();
-        } else if (!isOpen && cliErrorsDialogRef.value.open) {
-            cliErrorsDialogRef.value.close();
-        }
-    },
-);
-
 async function onTabMounted() {
     store.initialize();
-    GUI.content_ready();
     void update_sensor_status();
     await store.reloadRepositories();
 }
@@ -298,16 +287,25 @@ async function closeSourcesDialog() {
     await store.reloadRepositories();
 }
 
-function handleSaveSource(index, source) {
-    store.updateSource(index, source);
+// The name is the fix as much as the type: PresetSourcesDialog emits source.id and
+// store.updateSource() resolves it with getSourceIndexById(), so this was never an index.
+function handleSaveSource(sourceId: string, source: Record<string, unknown>) {
+    store.updateSource(sourceId, source);
 }
 
-function handleActivateSource(sourceId) {
+function handleActivateSource(sourceId: string) {
     store.setSourceActive(sourceId, true);
 }
 
-function handleDeactivateSource(sourceId) {
+function handleDeactivateSource(sourceId: string) {
     store.setSourceActive(sourceId, false);
+}
+
+// The details dialog only emits while it shows a preset, so both are set whenever this runs.
+function toggleSelectedPresetFavorite() {
+    if (store.selectedPreset && store.selectedPresetRepository) {
+        store.toggleFavorite(store.selectedPreset, store.selectedPresetRepository);
+    }
 }
 
 async function ensureCliPresetActionSupported() {
@@ -323,7 +321,7 @@ async function ensureCliPresetActionSupported() {
             i18n.getMessage("warningTitle"),
             i18n.getMessage("mspCliFirmwareTooOld", {
                 required: MIN_FC_VERSION_FOR_MSP_CLI,
-                current: FC.CONFIG?.flightControllerVersion || "?",
+                current: fcStore.config?.flightControllerVersion || "?",
             }),
             { confirmText: i18n.getMessage("close") },
         );
@@ -333,8 +331,8 @@ async function ensureCliPresetActionSupported() {
     return true;
 }
 
-function isPickerAbortError(error) {
-    return error?.name === "AbortError";
+function isPickerAbortError(error: unknown) {
+    return error instanceof Error && error.name === "AbortError";
 }
 
 async function saveConfigBackup() {
@@ -347,13 +345,14 @@ async function saveConfigBackup() {
     try {
         const cliStrings = await cliSession.readDumpAll();
         const filename = generateFilename("cli_backup", "txt");
-        const hasDefaultsPrefix = cliStrings.some((line) => line.trim().toLowerCase() === "defaults nosave");
+        const hasDefaultsPrefix = cliStrings.some((line: string) => line.trim().toLowerCase() === "defaults nosave");
         const lines = hasDefaultsPrefix ? cliStrings : ["defaults nosave", "", ...cliStrings];
         const text = lines.join("\n");
         const file = await FileSystem.pickSaveFile(
             filename,
             i18n.getMessage("fileSystemPickerFiles", { typeof: "TXT" }),
             ".txt",
+            "presets-file",
         );
 
         if (!file) {
@@ -382,7 +381,11 @@ async function loadConfigBackup() {
     }
 
     try {
-        const file = await FileSystem.pickOpenFile(i18n.getMessage("fileSystemPickerFiles", { typeof: "TXT" }), ".txt");
+        const file = await FileSystem.pickOpenFile(
+            i18n.getMessage("fileSystemPickerFiles", { typeof: "TXT" }),
+            ".txt",
+            "presets-file",
+        );
 
         if (!file) {
             return;
@@ -404,15 +407,15 @@ async function loadConfigBackup() {
         console.error("Failed loading presets config:", error);
         await dialog.showInfo(
             i18n.getMessage("warningTitle"),
-            `${i18n.getMessage("userBackupsLoadFailed")}<br>${escapeHtml(String(error.message ?? ""))}`,
+            `${i18n.getMessage("userBackupsLoadFailed")}<br>${escapeHtml(error instanceof Error ? error.message : "")}`,
             { confirmText: i18n.getMessage("close") },
         );
     }
 }
 
-function isPresetCompatible(preset) {
-    return preset.firmware_version?.some((firmwareVersion) =>
-        FC.CONFIG.flightControllerVersion.startsWith(firmwareVersion),
+function isPresetCompatible(preset: { firmware_version?: string[] }) {
+    return preset.firmware_version?.some((firmwareVersion: string) =>
+        fcStore.config.flightControllerVersion.startsWith(firmwareVersion),
     );
 }
 
@@ -430,7 +433,7 @@ function pickPresetAfterVersionCheck() {
         i18n.getMessage("presetsWarningDialogTitle"),
         i18n.getMessage("presetsWarningWrongVersionConfirmation", [
             store.selectedPreset.firmware_version,
-            FC.CONFIG.flightControllerVersion,
+            fcStore.config.flightControllerVersion,
         ]),
         () => store.pickSelectedPreset(),
         null,
@@ -504,6 +507,7 @@ async function saveAnywayAfterCliErrors() {
 
 function closeCliErrorsWithoutSaving() {
     store.closeCliErrorsDialog(false);
+    handleCliErrorsDialogClose();
 }
 
 async function handleCliErrorsDialogClose() {
@@ -516,7 +520,10 @@ async function handleCliErrorsDialogClose() {
         try {
             await cliSession.send("exit");
         } catch (error) {
-            console.error("Failed to send exit:", error);
+            // `exit` reboots the FC; the port closing before it replies is expected, not a failure.
+            if (!isConnectionClosedError(error)) {
+                console.error("Failed to send exit:", error);
+            }
         } finally {
             scheduleReconnect();
         }
@@ -553,7 +560,7 @@ async function handleCliErrorsDialogClose() {
     color: white;
     box-sizing: border-box;
     user-select: text;
-    float: left;
+    float: inline-start;
 }
 
 .presets_cli_wrapper {

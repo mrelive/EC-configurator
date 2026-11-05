@@ -20,6 +20,7 @@
                     <div>{{ $t("adjustmentsColumnIsInRange") }}</div>
                     <div>{{ $t("adjustmentsColumnThenApplyFunction") }}</div>
                     <div>{{ $t("adjustmentsColumnViaChannel") }}</div>
+                    <div>{{ $t("adjustmentsColumnMode") }}</div>
                     <div>
                         {{ $t("adjustmentsColumnAdjustmentCenter") }}
                         <HelpIcon :text="$t('adjustmentsCenterHelp')" />
@@ -42,7 +43,7 @@
                             <span class="row-index">#{{ originalIndex + 1 }}</span>
                             <USwitch
                                 v-model="adjustment.enabled"
-                                size="sm"
+                                size="xs"
                                 @update:model-value="onEnableChange(adjustment)"
                             />
                         </div>
@@ -70,21 +71,14 @@
                                         v-if="rcChannelData[adjustment.auxChannelIndex] !== undefined"
                                         class="marker"
                                         :style="{
-                                            left: channelPercent(rcChannelData[adjustment.auxChannelIndex]) + '%',
+                                            insetInlineStart:
+                                                channelPercent(rcChannelData[adjustment.auxChannelIndex]) + '%',
                                         }"
                                     ></div>
                                 </div>
                                 <span class="range-value">{{ adjustment.range.end }}</span>
                             </div>
-                            <div class="pips-channel-range">
-                                <span
-                                    v-for="pip in pipValues"
-                                    :key="pip"
-                                    class="pip"
-                                    :style="{ left: channelPercent(pip) + '%' }"
-                                    >{{ pip }}</span
-                                >
-                            </div>
+                            <ChannelRangePips :pips="pipValues" />
                         </div>
 
                         <div class="adjustment-function" :data-label="$t('adjustmentsColumnThenApplyFunction')">
@@ -95,6 +89,7 @@
                                 :disabled="!adjustment.enabled"
                                 searchable
                                 class="w-full"
+                                @update:model-value="onFunctionChange(adjustment)"
                             />
                         </div>
 
@@ -106,21 +101,37 @@
                             />
                         </div>
 
+                        <div class="adjustment-mode" :data-label="$t('adjustmentsColumnMode')">
+                            <span v-if="adjustment.mode === 'selection'" class="mode-badge">
+                                {{ $t("adjustmentsModeSelection") }}
+                            </span>
+                            <USelect
+                                v-else
+                                :model-value="adjustment.mode"
+                                :items="stepModeOptions"
+                                :disabled="!adjustment.enabled"
+                                @update:model-value="onModeChange(adjustment, $event)"
+                            />
+                        </div>
+
                         <div class="adjustment-center" :data-label="$t('adjustmentsColumnAdjustmentCenter')">
                             <UInputNumber
+                                v-if="adjustment.mode === 'absolute'"
                                 v-model="adjustment.adjustmentCenter"
                                 size="xs"
                                 orientation="vertical"
                                 class="w-20"
                                 :disabled="!adjustment.enabled"
-                                :min="0"
+                                :min="1"
                                 :max="2000"
                                 :step="1"
                             />
+                            <span v-else class="cell-na">—</span>
                         </div>
 
                         <div class="adjustment-scale" :data-label="$t('adjustmentsColumnAdjustmentScale')">
                             <UInputNumber
+                                v-if="adjustment.mode === 'absolute'"
                                 v-model="adjustment.adjustmentScale"
                                 size="xs"
                                 orientation="vertical"
@@ -130,6 +141,7 @@
                                 :max="2000"
                                 :step="1"
                             />
+                            <span v-else class="cell-na">—</span>
                         </div>
                     </div>
                 </div>
@@ -137,17 +149,23 @@
         </div>
 
         <div class="content_toolbar toolbar_fixed_bottom">
-            <UButton :label="$t('adjustmentsSave')" :disabled="!hasChanges" @click="saveAdjustments" />
+            <UButton
+                :label="$t('adjustmentsSave')"
+                :disabled="!hasChanges"
+                :loading="isSaving"
+                size="xs"
+                @click="saveAdjustments"
+            />
         </div>
     </BaseTab>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { onMounted, nextTick } from "vue";
 import BaseTab from "./BaseTab.vue";
 import WikiButton from "../elements/WikiButton.vue";
 import HelpIcon from "@/components/elements/HelpIcon.vue";
-import GUI from "../../js/gui";
+import ChannelRangePips from "@/components/elements/ChannelRangePips.vue";
 import { useTranslation } from "i18next-vue";
 import { useAdjustmentsState } from "@/composables/adjustments/useAdjustmentsState";
 import { useAdjustmentsData } from "@/composables/adjustments/useAdjustmentsData";
@@ -155,19 +173,21 @@ import { useAdjustmentsSave } from "@/composables/adjustments/useAdjustmentsSave
 import { useAdjustmentsPolling } from "@/composables/adjustments/useAdjustmentsPolling";
 
 const { t } = useTranslation();
-
 const { adjustments, hasChanges, storeOriginals, showAllSlots, activeCount, visibleAdjustments } =
     useAdjustmentsState();
 const {
     auxChannelOptions,
     sortedFunctions,
+    stepModeOptions,
     pipValues,
     channelPercent,
     onEnableChange,
+    onModeChange,
+    onFunctionChange,
     loadMSPData,
     initializeAdjustments,
 } = useAdjustmentsData(adjustments, t);
-const { saveAdjustments } = useAdjustmentsSave(adjustments, storeOriginals, t);
+const { saveAdjustments, isSaving } = useAdjustmentsSave(adjustments, storeOriginals);
 const { rcChannelData, startRcDataPolling } = useAdjustmentsPolling();
 
 onMounted(async () => {
@@ -176,152 +196,163 @@ onMounted(async () => {
     storeOriginals();
     await nextTick();
     startRcDataPolling();
-    GUI.content_ready();
 });
 </script>
 
-<style scoped>
-.adjustments-container {
-    width: 100%;
-    margin: 20px 0;
-}
-
-.adjustments-summary {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 16px;
-    font-size: 13px;
-    color: var(--text-secondary);
-}
-
-.adjustments-header,
-.adjustment {
-    display: grid;
-    grid-template-columns: 3.5rem 5rem 1fr 13rem 5rem 4.5rem 4.5rem;
-    gap: 12px;
-    padding: 12px 16px;
-}
-
-.adjustments-header {
-    background: var(--ui-bg-muted);
-    font-weight: 600;
-    font-size: 13px;
-    color: var(--text-primary);
-    position: sticky;
-    top: 0;
-    z-index: 10;
-}
-
-.adjustments-list {
-    display: flex;
-    flex-direction: column;
-}
-
-.adjustment {
-    background: transparent;
-    align-items: center;
-}
-
-.adjustment-disabled {
-    opacity: 0.4;
-}
-
-.adjustment-disabled .adjustment-channel,
-.adjustment-disabled .adjustment-range,
-.adjustment-disabled .adjustment-function,
-.adjustment-disabled .adjustment-via,
-.adjustment-disabled .adjustment-center,
-.adjustment-disabled .adjustment-scale {
-    pointer-events: none;
-}
-
-.adjustment-enable {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 6px;
-}
-
-.row-index {
-    font-size: 11px;
-    color: var(--text-tertiary);
-    font-weight: 600;
-    min-width: 1.2rem;
-}
-
-.adjustment-range {
-    min-width: 0;
-}
-
-.range-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.range-value {
-    font-size: 10px;
-    color: var(--text-secondary);
-    font-variant-numeric: tabular-nums;
-    min-width: 2rem;
-    text-align: center;
-}
-
-.range-slider {
-    position: relative;
-    flex: 1;
-    min-width: 0;
-}
-
-.marker {
-    position: absolute;
-    top: 50%;
-    width: 2px;
-    height: 24px;
-    background: #ff0;
-    transform: translate(-50%, -50%);
-    z-index: 3;
-    pointer-events: none;
-    box-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
-}
-
-.pips-channel-range {
-    position: relative;
-    height: 20px;
-    margin-top: 4px;
-}
-
-.pip {
-    position: absolute;
-    transform: translateX(-50%);
-    font-size: 10px;
-    color: var(--text-tertiary);
-    white-space: nowrap;
-}
-
-/* Responsive layout */
-@media (max-width: 1200px) {
-    .adjustments-header {
-        display: none;
+<style lang="less">
+.tab-adjustments {
+    .adjustments-container {
+        width: 100%;
+        margin: 20px 0;
     }
 
-    .adjustment {
-        grid-template-columns: 1fr;
-        gap: 12px;
-        padding: 16px;
-    }
-
-    .adjustment > div::before {
-        content: attr(data-label);
-        font-weight: 600;
-        display: block;
-        margin-bottom: 8px;
+    .adjustments-summary {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        font-size: 13px;
         color: var(--text-secondary);
     }
 
+    .adjustments-header,
+    .adjustment {
+        display: grid;
+        grid-template-columns: 3.5rem 5rem 1fr 13rem 5rem 7rem 5rem 5rem;
+        gap: 12px;
+        padding: 12px 16px;
+    }
+
+    .adjustments-header {
+        background: var(--ui-bg-muted);
+        font-weight: 600;
+        font-size: 13px;
+        color: var(--text-primary);
+        position: sticky;
+        top: 0;
+        z-index: 10;
+    }
+
+    .adjustments-list {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .adjustment {
+        background: transparent;
+        align-items: center;
+    }
+
+    .adjustment-disabled {
+        opacity: 0.4;
+    }
+
+    .adjustment-disabled .adjustment-channel,
+    .adjustment-disabled .adjustment-range,
+    .adjustment-disabled .adjustment-function,
+    .adjustment-disabled .adjustment-via,
+    .adjustment-disabled .adjustment-mode,
+    .adjustment-disabled .adjustment-center,
+    .adjustment-disabled .adjustment-scale {
+        pointer-events: none;
+    }
+
     .adjustment-enable {
-        justify-content: flex-start;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .row-index {
+        font-size: 11px;
+        color: var(--text-tertiary);
+        font-weight: 600;
+        min-width: 1.2rem;
+    }
+
+    .adjustment-range {
+        min-width: 0;
+    }
+
+    .range-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .range-value {
+        font-size: 10px;
+        color: var(--text-secondary);
+        font-variant-numeric: tabular-nums;
+        min-width: 2rem;
+        text-align: center;
+    }
+
+    .range-slider {
+        position: relative;
+        flex: 1;
+        min-width: 0;
+    }
+
+    /* The slider is mirrored in RTL, so the marker rides the inline axis and its centering
+       shift has to be flipped by hand: translate is always physical. */
+    .marker {
+        position: absolute;
+        top: 50%;
+        width: 2px;
+        height: 24px;
+        background: var(--primary-500);
+        transform: translate(-50%, -50%);
+        z-index: 3;
+        pointer-events: none;
+        box-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
+    }
+
+    html[dir="rtl"] & .marker {
+        transform: translate(50%, -50%);
+    }
+
+    .mode-badge {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        background: var(--ui-bg-muted);
+        padding: 2px 6px;
+        border-radius: 4px;
+        white-space: nowrap;
+    }
+
+    .cell-na {
+        font-size: 13px;
+        color: var(--text-tertiary);
+        display: block;
+        text-align: center;
+    }
+
+    /* Responsive layout */
+    @media (max-width: 1200px) {
+        .adjustments-header {
+            display: none;
+        }
+
+        .adjustment {
+            grid-template-columns: 1fr;
+            gap: 12px;
+            padding: 16px;
+        }
+
+        .adjustment > div::before {
+            content: attr(data-label);
+            font-weight: 600;
+            display: block;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+        }
+
+        .adjustment-enable {
+            justify-content: flex-start;
+        }
     }
 }
 </style>

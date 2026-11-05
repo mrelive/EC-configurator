@@ -19,7 +19,9 @@
 
             <!-- Rate Setup Table -->
             <UiBox type="neutral">
-                <div class="grid grid-cols-[4rem_repeat(3,4rem)_4rem] gap-x-1 gap-y-1 items-center min-w-0">
+                <div
+                    class="grid grid-cols-[4rem_repeat(3,4rem)_4rem] gap-x-1 gap-y-1 items-center min-w-0 overflow-x-auto pb-1"
+                >
                     <!-- Header -->
                     <div></div>
                     <div class="text-xs text-center">{{ rcRateLabel }}</div>
@@ -36,7 +38,7 @@
                     </div>
 
                     <!-- Roll -->
-                    <div class="font-bold text-white text-center py-0.5 px-1 bg-[#e24761] rounded text-xs">
+                    <div class="font-bold text-white text-center py-0.5 px-1 bg-axis-roll rounded text-xs">
                         {{ $t("controlAxisRoll") }}
                     </div>
                     <UInputNumber
@@ -89,7 +91,7 @@
                     </div>
 
                     <!-- Pitch -->
-                    <div class="font-bold text-white text-center py-0.5 px-1 bg-[#49c747] rounded text-xs">
+                    <div class="font-bold text-white text-center py-0.5 px-1 bg-axis-pitch rounded text-xs">
                         {{ $t("controlAxisPitch") }}
                     </div>
                     <UInputNumber
@@ -142,7 +144,7 @@
                     </div>
 
                     <!-- Yaw -->
-                    <div class="font-bold text-white text-center py-0.5 px-1 bg-[#477ac7] rounded text-xs">
+                    <div class="font-bold text-white text-center py-0.5 px-1 bg-axis-yaw rounded text-xs">
                         {{ $t("controlAxisYaw") }}
                     </div>
                     <UInputNumber
@@ -197,7 +199,7 @@
             </UiBox>
 
             <!-- Rate Curve -->
-            <UiBox :title="$t('pidTuningRatesCurve')" :help="$t('pidTuningRatesTip')" type="neutral">
+            <UiBox :title="$t('pidTuningRatesCurve')" :help="$t('pidTuningRatesTip')" type="neutral" collapsible>
                 <div
                     class="relative bg-white dark:bg-neutral-900 border border-default p-1"
                     style="height: 362px; min-width: 200px"
@@ -284,14 +286,14 @@
             </UiBox>
 
             <!-- Throttle Curve Preview -->
-            <UiBox :title="$t('pidTuningThrottleCurvePreview')" type="neutral">
+            <UiBox :title="$t('pidTuningThrottleCurvePreview')" type="neutral" collapsible>
                 <div class="bg-white dark:bg-neutral-900 border border-default p-1" style="height: 164px">
                     <canvas ref="throttleCurveCanvas" class="w-full h-full block"></canvas>
                 </div>
             </UiBox>
 
             <!-- Rates 3D Preview -->
-            <UiBox :title="$t('pidTuningRatesModelPreview')" type="neutral">
+            <UiBox :title="$t('pidTuningRatesModelPreview')" type="neutral" collapsible>
                 <div class="bg-white dark:bg-neutral-900 border border-default p-1 w-full" ref="ratesPreviewContainer">
                     <canvas ref="ratesPreviewCanvas" class="block"></canvas>
                 </div>
@@ -300,19 +302,19 @@
     </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { useTranslation } from "i18next-vue";
 import { i18n } from "@/js/localization";
 import { useDialog } from "@/composables/useDialog";
+import { useRatesRcPolling } from "@/composables/pidTuning/useRatesRcPolling";
 import UiBox from "@/components/elements/UiBox.vue";
 import HelpIcon from "@/components/elements/HelpIcon.vue";
 import SettingRow from "@/components/elements/SettingRow.vue";
-import FC from "@/js/fc";
-import MSP from "@/js/msp";
-import MSPCodes from "@/js/msp/MSPCodes";
-import RateCurve from "@/js/RateCurve";
+import { useFlightControllerStore } from "@/stores/fc";
+import RateCurve, { axisRateCurveParams, type CurrentRates, type RateCurveParams } from "@/js/RateCurve";
 import Model from "@/js/model";
+import { degToRad } from "@/js/utils/common";
 import semver from "semver";
 import { API_VERSION_1_47 } from "@/js/data_storage";
 import echoLogo from "@/images/echo_corp_logo.png";
@@ -320,10 +322,44 @@ import raceflightLogo from "@/images/rate_logos/raceflight.svg";
 import kissLogo from "@/images/rate_logos/kiss.svg";
 import actualLogo from "@/images/rate_logos/actual.svg";
 import quickratesLogo from "@/images/rate_logos/quickrates.svg";
-
-const emit = defineEmits(["change"]);
+import { getCssVar } from "@/js/utils/cssVar";
 
 const { t } = useTranslation();
+const fcStore = useFlightControllerStore();
+
+type BalloonAlign = "left" | "right" | "none";
+
+interface BalloonColors {
+    color: string;
+    border: string;
+    text: string;
+}
+
+/** Screen area already taken by a drawn balloon, so the next one can move clear of it. */
+interface BalloonBounds {
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+}
+
+interface Balloon {
+    value: number;
+    draw: () => void;
+}
+
+interface Point {
+    x: number;
+    y: number;
+}
+
+interface ThrottlePosition {
+    thrPercent: number;
+    thrX: number;
+    mid: number;
+}
+
+type CurveParams = ReturnType<typeof computeCurveParams>;
 
 // USelect item arrays
 const ratesTypeItems = [
@@ -341,33 +377,34 @@ const throttleLimitTypeItems = computed(() => [
 ]);
 
 // Canvas refs
-const rateCurveLayer0 = ref(null);
-const rateCurveLayer1 = ref(null);
-const throttleCurveCanvas = ref(null);
-const ratesPreviewCanvas = ref(null);
-const ratesPreviewContainer = ref(null);
+const rateCurveLayer0 = ref<HTMLCanvasElement | null>(null);
+const rateCurveLayer1 = ref<HTMLCanvasElement | null>(null);
+const throttleCurveCanvas = ref<HTMLCanvasElement | null>(null);
+const ratesPreviewCanvas = ref<HTMLCanvasElement | null>(null);
+const ratesPreviewContainer = ref<HTMLElement | null>(null);
+
+// Live stick data (MSP_RC), cleared on unmount
+const { startRcPolling } = useRatesRcPolling();
 
 // 3D Model
-let model = null;
-let rcUpdateInterval = null; // For setInterval RC updates
-let initModelTimeoutId = null; // For setTimeout initModel retries
-let modelInitTimeout = null; // For setTimeout after model creation
-let initTimeout = null; // For setTimeout initial draw delay
-let animationFrameId = null;
+let model: Model | null = null;
+let initModelTimeoutId: ReturnType<typeof setTimeout> | null = null; // For setTimeout initModel retries
+let modelInitTimeout: ReturnType<typeof setTimeout> | null = null; // For setTimeout after model creation
+let initTimeout: ReturnType<typeof setTimeout> | null = null; // For setTimeout initial draw delay
+let animationFrameId: number | null = null;
 let lastTimestamp = 0;
 let keepRendering = true;
 
 // API Version helpers
-const hasProfileNames = computed(() => semver.gte(FC.CONFIG.apiVersion, API_VERSION_1_45));
-const hasThrottleHover = computed(() => semver.gte(FC.CONFIG.apiVersion, API_VERSION_1_47));
+const hasThrottleHover = computed(() => semver.gte(fcStore.config.apiVersion, API_VERSION_1_47));
 
 // Rates Type
 const dialog = useDialog();
 
 const ratesType = computed({
-    get: () => FC.RC_TUNING.rates_type,
+    get: () => fcStore.rcTuning.rates_type,
     set: (value) => {
-        const current = FC.RC_TUNING.rates_type;
+        const current = fcStore.rcTuning.rates_type;
         if (value === current) {
             return;
         }
@@ -384,8 +421,11 @@ const ratesType = computed({
             {
                 confirm: () => {
                     dialog.close();
-                    FC.RC_TUNING.rates_type = value;
-                    emit("change");
+                    fcStore.rcTuning.rates_type = value;
+                    // Only a user-initiated type change resets the rates to that type's defaults.
+                    // A type change coming from MSP (profile switch, reconnect) must keep the
+                    // values the FC just sent us.
+                    setDefaultsForRatesType(value);
                 },
                 cancel: () => {
                     dialog.close();
@@ -506,7 +546,7 @@ const rcRatePrecision = computed(() => {
 
 // Helper to get scale factor based on rates type
 const getScaleFactor = () => {
-    const type = FC.RC_TUNING.rates_type;
+    const type = fcStore.rcTuning.rates_type;
     switch (type) {
         case RatesType.RACEFLIGHT:
         case RatesType.ACTUAL:
@@ -517,7 +557,7 @@ const getScaleFactor = () => {
 };
 
 const getRateScaleFactor = () => {
-    const type = FC.RC_TUNING.rates_type;
+    const type = fcStore.rcTuning.rates_type;
     switch (type) {
         case RatesType.RACEFLIGHT:
             return 100;
@@ -531,49 +571,49 @@ const getRateScaleFactor = () => {
 
 // RC Rate (Roll) - scaled for display
 const rcRate = computed({
-    get: () => FC.RC_TUNING.RC_RATE * getScaleFactor(),
-    set: (value) => (FC.RC_TUNING.RC_RATE = value / getScaleFactor()),
+    get: () => fcStore.rcTuning.RC_RATE * getScaleFactor(),
+    set: (value) => (fcStore.rcTuning.RC_RATE = value / getScaleFactor()),
 });
 
 // RC Rate Pitch - scaled for display
 const rcRatePitch = computed({
-    get: () => FC.RC_TUNING.rcPitchRate * getScaleFactor(),
-    set: (value) => (FC.RC_TUNING.rcPitchRate = value / getScaleFactor()),
+    get: () => fcStore.rcTuning.rcPitchRate * getScaleFactor(),
+    set: (value) => (fcStore.rcTuning.rcPitchRate = value / getScaleFactor()),
 });
 
 // RC Rate Yaw - scaled for display
 const rcRateYaw = computed({
-    get: () => FC.RC_TUNING.rcYawRate * getScaleFactor(),
-    set: (value) => (FC.RC_TUNING.rcYawRate = value / getScaleFactor()),
+    get: () => fcStore.rcTuning.rcYawRate * getScaleFactor(),
+    set: (value) => (fcStore.rcTuning.rcYawRate = value / getScaleFactor()),
 });
 
 // Roll Rate - scaled for display
 const rollRate = computed({
-    get: () => FC.RC_TUNING.roll_rate * getRateScaleFactor(),
-    set: (value) => (FC.RC_TUNING.roll_rate = value / getRateScaleFactor()),
+    get: () => fcStore.rcTuning.roll_rate * getRateScaleFactor(),
+    set: (value) => (fcStore.rcTuning.roll_rate = value / getRateScaleFactor()),
 });
 
 // Pitch Rate - scaled for display
 const pitchRate = computed({
-    get: () => FC.RC_TUNING.pitch_rate * getRateScaleFactor(),
-    set: (value) => (FC.RC_TUNING.pitch_rate = value / getRateScaleFactor()),
+    get: () => fcStore.rcTuning.pitch_rate * getRateScaleFactor(),
+    set: (value) => (fcStore.rcTuning.pitch_rate = value / getRateScaleFactor()),
 });
 
 // Yaw Rate - scaled for display
 const yawRate = computed({
-    get: () => FC.RC_TUNING.yaw_rate * getRateScaleFactor(),
-    set: (value) => (FC.RC_TUNING.yaw_rate = value / getRateScaleFactor()),
+    get: () => fcStore.rcTuning.yaw_rate * getRateScaleFactor(),
+    set: (value) => (fcStore.rcTuning.yaw_rate = value / getRateScaleFactor()),
 });
 
 // RC Expo
 const rcExpo = computed({
     get: () => {
         const type = ratesType.value;
-        return type === RatesType.RACEFLIGHT ? FC.RC_TUNING.RC_EXPO * 100 : FC.RC_TUNING.RC_EXPO;
+        return type === RatesType.RACEFLIGHT ? fcStore.rcTuning.RC_EXPO * 100 : fcStore.rcTuning.RC_EXPO;
     },
     set: (value) => {
         const type = ratesType.value;
-        FC.RC_TUNING.RC_EXPO = type === RatesType.RACEFLIGHT ? value / 100 : value;
+        fcStore.rcTuning.RC_EXPO = type === RatesType.RACEFLIGHT ? value / 100 : value;
     },
 });
 
@@ -581,11 +621,11 @@ const rcExpo = computed({
 const rcPitchExpo = computed({
     get: () => {
         const type = ratesType.value;
-        return type === RatesType.RACEFLIGHT ? FC.RC_TUNING.RC_PITCH_EXPO * 100 : FC.RC_TUNING.RC_PITCH_EXPO;
+        return type === RatesType.RACEFLIGHT ? fcStore.rcTuning.RC_PITCH_EXPO * 100 : fcStore.rcTuning.RC_PITCH_EXPO;
     },
     set: (value) => {
         const type = ratesType.value;
-        FC.RC_TUNING.RC_PITCH_EXPO = type === RatesType.RACEFLIGHT ? value / 100 : value;
+        fcStore.rcTuning.RC_PITCH_EXPO = type === RatesType.RACEFLIGHT ? value / 100 : value;
     },
 });
 
@@ -593,38 +633,38 @@ const rcPitchExpo = computed({
 const rcYawExpo = computed({
     get: () => {
         const type = ratesType.value;
-        return type === RatesType.RACEFLIGHT ? FC.RC_TUNING.RC_YAW_EXPO * 100 : FC.RC_TUNING.RC_YAW_EXPO;
+        return type === RatesType.RACEFLIGHT ? fcStore.rcTuning.RC_YAW_EXPO * 100 : fcStore.rcTuning.RC_YAW_EXPO;
     },
     set: (value) => {
         const type = ratesType.value;
-        FC.RC_TUNING.RC_YAW_EXPO = type === RatesType.RACEFLIGHT ? value / 100 : value;
+        fcStore.rcTuning.RC_YAW_EXPO = type === RatesType.RACEFLIGHT ? value / 100 : value;
     },
 });
 
 // Throttle Settings
 const throttleLimitType = computed({
-    get: () => FC.RC_TUNING.throttleLimitType,
-    set: (value) => (FC.RC_TUNING.throttleLimitType = value),
+    get: () => fcStore.rcTuning.throttleLimitType,
+    set: (value) => (fcStore.rcTuning.throttleLimitType = value),
 });
 
 const throttleLimitPercent = computed({
-    get: () => FC.RC_TUNING.throttleLimitPercent,
-    set: (value) => (FC.RC_TUNING.throttleLimitPercent = Number.parseFloat(value)),
+    get: () => fcStore.rcTuning.throttleLimitPercent,
+    set: (value) => (fcStore.rcTuning.throttleLimitPercent = Number.parseFloat(String(value))),
 });
 
 const throttleMid = computed({
-    get: () => FC.RC_TUNING.throttle_MID ?? 0,
-    set: (value) => (FC.RC_TUNING.throttle_MID = Number.parseFloat(value)),
+    get: () => fcStore.rcTuning.throttle_MID ?? 0,
+    set: (value) => (fcStore.rcTuning.throttle_MID = Number.parseFloat(String(value))),
 });
 
 const throttleHover = computed({
-    get: () => FC.RC_TUNING.throttle_HOVER ?? 0.5,
-    set: (value) => (FC.RC_TUNING.throttle_HOVER = Number.parseFloat(value)),
+    get: () => fcStore.rcTuning.throttle_HOVER ?? 0.5,
+    set: (value) => (fcStore.rcTuning.throttle_HOVER = Number.parseFloat(String(value))),
 });
 
 const throttleExpo = computed({
-    get: () => FC.RC_TUNING.throttle_EXPO ?? 0,
-    set: (value) => (FC.RC_TUNING.throttle_EXPO = Number.parseFloat(value)),
+    get: () => fcStore.rcTuning.throttle_EXPO ?? 0,
+    set: (value) => (fcStore.rcTuning.throttle_EXPO = Number.parseFloat(String(value))),
 });
 
 // Rate Curve Helper
@@ -633,14 +673,19 @@ const rateCurve = new RateCurve(false);
 // Get current rates with proper scaling based on rates type - always returns fresh data
 const getCurrentRatesSnapshot = () => rateCurve.getCurrentRates();
 
+// Only the legacy curve has no max angular velocity, and rateCurve is built non-legacy.
+function maxAngularVelOf(params: RateCurveParams): number {
+    return rateCurve.getMaxAngularVel(params) ?? Number.NaN;
+}
+
 // Helper functions for rate calculations
 const RC_RATE_INCREMENTAL = 14.54;
 
-function getRcRateModified(rate) {
+function getRcRateModified(rate: number) {
     return rate > 2 ? (rate - 2) * RC_RATE_INCREMENTAL + 2 : rate;
 }
 
-function getAcroSensitivityFraction(exponent, rate) {
+function getAcroSensitivityFraction(exponent: number, rate: number) {
     return ((1 - exponent) * getRcRateModified(rate) * 200).toFixed(0);
 }
 
@@ -650,7 +695,7 @@ const centerSensitivityRoll = computed(() => {
         rollRate.value,
         rcRate.value,
         rcExpo.value,
-        FC.RC_TUNING.roll_rate_limit,
+        fcStore.rcTuning.roll_rate_limit,
     );
     const centerSensitivity = getAcroSensitivityFraction(rcExpo.value, rcRate.value);
     return `${centerSensitivity} - ${maxAngularVel}`;
@@ -661,7 +706,7 @@ const centerSensitivityPitch = computed(() => {
         pitchRate.value,
         rcRatePitch.value,
         rcPitchExpo.value,
-        FC.RC_TUNING.pitch_rate_limit,
+        fcStore.rcTuning.pitch_rate_limit,
     );
     const centerSensitivity = getAcroSensitivityFraction(rcPitchExpo.value, rcRatePitch.value);
     return `${centerSensitivity} - ${maxAngularVel}`;
@@ -673,7 +718,7 @@ const centerSensitivityYaw = computed(() => {
         yawRate.value,
         rcRateYaw.value,
         rcYawExpo.value,
-        FC.RC_TUNING.yaw_rate_limit,
+        fcStore.rcTuning.yaw_rate_limit,
         rates.yawDeadband,
     );
     const centerSensitivity = getAcroSensitivityFraction(rcYawExpo.value, rcRateYaw.value);
@@ -682,7 +727,12 @@ const centerSensitivityYaw = computed(() => {
 
 // Max Angular Velocity (Non-Betaflight Rates) - String versions for display
 const maxAngularVelRoll = computed(() => {
-    return calculateMaxAngularVel(rollRate.value, rcRate.value, rcExpo.value, FC.RC_TUNING.roll_rate_limit).toString();
+    return calculateMaxAngularVel(
+        rollRate.value,
+        rcRate.value,
+        rcExpo.value,
+        fcStore.rcTuning.roll_rate_limit,
+    ).toString();
 });
 
 const maxAngularVelPitch = computed(() => {
@@ -690,7 +740,7 @@ const maxAngularVelPitch = computed(() => {
         pitchRate.value,
         rcRatePitch.value,
         rcPitchExpo.value,
-        FC.RC_TUNING.pitch_rate_limit,
+        fcStore.rcTuning.pitch_rate_limit,
     ).toString();
 });
 
@@ -700,18 +750,23 @@ const maxAngularVelYaw = computed(() => {
         yawRate.value,
         rcRateYaw.value,
         rcYawExpo.value,
-        FC.RC_TUNING.yaw_rate_limit,
+        fcStore.rcTuning.yaw_rate_limit,
         rates.yawDeadband,
     ).toString();
 });
 
 // Numeric Max Angular Velocity (All rate types) - Used for warning checks
 const numericMaxAngularVelRoll = computed(() => {
-    return calculateMaxAngularVel(rollRate.value, rcRate.value, rcExpo.value, FC.RC_TUNING.roll_rate_limit);
+    return calculateMaxAngularVel(rollRate.value, rcRate.value, rcExpo.value, fcStore.rcTuning.roll_rate_limit);
 });
 
 const numericMaxAngularVelPitch = computed(() => {
-    return calculateMaxAngularVel(pitchRate.value, rcRatePitch.value, rcPitchExpo.value, FC.RC_TUNING.pitch_rate_limit);
+    return calculateMaxAngularVel(
+        pitchRate.value,
+        rcRatePitch.value,
+        rcPitchExpo.value,
+        fcStore.rcTuning.pitch_rate_limit,
+    );
 });
 
 const numericMaxAngularVelYaw = computed(() => {
@@ -720,7 +775,7 @@ const numericMaxAngularVelYaw = computed(() => {
         yawRate.value,
         rcRateYaw.value,
         rcYawExpo.value,
-        FC.RC_TUNING.yaw_rate_limit,
+        fcStore.rcTuning.yaw_rate_limit,
         rates.yawDeadband,
     );
 });
@@ -757,17 +812,17 @@ const expoLimits = computed(() => {
     return ratesType.value === RatesType.RACEFLIGHT ? { max: 100, min: 0, step: 1 } : { max: 1, min: 0, step: 0.01 };
 });
 
-function calculateMaxAngularVel(rate, rcRate, rcExpo, limit, deadband) {
+function calculateMaxAngularVel(rate: number, rcRate: number, rcExpo: number, limit: number, deadband?: number) {
     // Use provided deadband or fall back to generic deadband
-    const db = deadband === undefined ? FC.RC_DEADBAND_CONFIG?.deadband || 0 : deadband;
-    const maxAngularVel = rateCurve.getMaxAngularVel(
+    const db = deadband === undefined ? fcStore.rcDeadbandConfig?.deadband || 0 : deadband;
+    const maxAngularVel = maxAngularVelOf({
         rate,
         rcRate,
         rcExpo,
-        true, // superexpo
-        db,
+        superExpoActive: true,
+        deadband: db,
         limit,
-    );
+    });
     return Math.round(maxAngularVel);
 }
 
@@ -779,45 +834,22 @@ function drawRateCurves() {
 
     const canvas = rateCurveLayer0.value;
     const ctx = canvas.getContext("2d");
+    if (!ctx) {
+        return;
+    }
 
     canvas.width = 1000;
     canvas.height = 1000;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Ensure we have valid rate data
-    // if (!FC.RC_TUNING || rcRate.value === undefined) {
-    //     return;
-    // }
 
     // Get scaled rates for drawing
     const rates = getCurrentRatesSnapshot();
 
     // Calculate max angular velocity using scaled values
     const maxAngularVels = [
-        rateCurve.getMaxAngularVel(
-            rates.roll_rate,
-            rates.rc_rate,
-            rates.rc_expo,
-            rates.superexpo,
-            rates.deadband,
-            rates.roll_rate_limit,
-        ),
-        rateCurve.getMaxAngularVel(
-            rates.pitch_rate,
-            rates.rc_rate_pitch,
-            rates.rc_pitch_expo,
-            rates.superexpo,
-            rates.deadband,
-            rates.pitch_rate_limit,
-        ),
-        rateCurve.getMaxAngularVel(
-            rates.yaw_rate,
-            rates.rc_rate_yaw,
-            rates.rc_yaw_expo,
-            rates.superexpo,
-            rates.yawDeadband,
-            rates.yaw_rate_limit,
-        ),
+        maxAngularVelOf(axisRateCurveParams(rates, "roll")),
+        maxAngularVelOf(axisRateCurveParams(rates, "pitch")),
+        maxAngularVelOf(axisRateCurveParams(rates, "yaw")),
     ];
     const maxAngularVel = rateCurve.setMaxAngularVel(Math.max(...maxAngularVels));
 
@@ -830,50 +862,23 @@ function drawRateCurves() {
 
     // Draw Roll curve (red)
     ctx.save();
-    ctx.strokeStyle = "#ff0000";
+    ctx.strokeStyle = getCssVar("--rates-curve-roll");
     ctx.translate(0, 0);
-    rateCurve.draw(
-        rates.roll_rate,
-        rates.rc_rate,
-        rates.rc_expo,
-        rates.superexpo,
-        rates.deadband,
-        rates.roll_rate_limit,
-        maxAngularVel,
-        ctx,
-    );
+    rateCurve.draw(axisRateCurveParams(rates, "roll"), maxAngularVel, ctx);
     ctx.restore();
 
     // Draw Pitch curve (green)
     ctx.save();
-    ctx.strokeStyle = "#00ff00";
+    ctx.strokeStyle = getCssVar("--rates-curve-pitch");
     ctx.translate(0, -4);
-    rateCurve.draw(
-        rates.pitch_rate,
-        rates.rc_rate_pitch,
-        rates.rc_pitch_expo,
-        rates.superexpo,
-        rates.deadband,
-        rates.pitch_rate_limit,
-        maxAngularVel,
-        ctx,
-    );
+    rateCurve.draw(axisRateCurveParams(rates, "pitch"), maxAngularVel, ctx);
     ctx.restore();
 
     // Draw Yaw curve (blue)
     ctx.save();
-    ctx.strokeStyle = "#0000ff";
+    ctx.strokeStyle = getCssVar("--rates-curve-yaw");
     ctx.translate(0, 4);
-    rateCurve.draw(
-        rates.yaw_rate,
-        rates.rc_rate_yaw,
-        rates.rc_yaw_expo,
-        rates.superexpo,
-        rates.yawDeadband,
-        rates.yaw_rate_limit,
-        maxAngularVel,
-        ctx,
-    );
+    rateCurve.draw(axisRateCurveParams(rates, "yaw"), maxAngularVel, ctx);
     ctx.restore();
 
     // Update layer1 overlays immediately and in nextTick
@@ -881,22 +886,22 @@ function drawRateCurves() {
     nextTick(() => updateRatesLabels());
 }
 
-// Balloon label configuration
-const BALLOON_COLORS = {
+// Balloon label configuration: the axis colours (--color-axis-*) at 40% and 60%
+const BALLOON_COLORS: Record<"roll" | "pitch" | "yaw", BalloonColors> = {
     roll: {
-        color: "rgba(255,128,128,0.4)",
-        border: "rgba(255,128,128,0.6)",
-        text: "#000000",
+        color: "rgba(226,71,97,0.4)",
+        border: "rgba(226,71,97,0.6)",
+        text: "black",
     },
     pitch: {
-        color: "rgba(128,255,128,0.4)",
-        border: "rgba(128,255,128,0.6)",
-        text: "#000000",
+        color: "rgba(73,199,71,0.4)",
+        border: "rgba(73,199,71,0.6)",
+        text: "black",
     },
     yaw: {
-        color: "rgba(128,128,255,0.4)",
-        border: "rgba(128,128,255,0.6)",
-        text: "#000000",
+        color: "rgba(71,122,199,0.4)",
+        border: "rgba(71,122,199,0.6)",
+        text: "black",
     },
 };
 
@@ -907,6 +912,9 @@ function updateRatesLabels() {
 
     const canvas = rateCurveLayer1.value;
     const ctx = canvas.getContext("2d");
+    if (!ctx) {
+        return;
+    }
 
     canvas.width = 1000;
     canvas.height = 1000;
@@ -921,33 +929,16 @@ function updateRatesLabels() {
 
     // Calculate max angular velocities
     const maxAngularVels = {
-        roll: rateCurve.getMaxAngularVel(
-            rates.roll_rate,
-            rates.rc_rate,
-            rates.rc_expo,
-            rates.superexpo,
-            rates.deadband,
-            rates.roll_rate_limit,
-        ),
-        pitch: rateCurve.getMaxAngularVel(
-            rates.pitch_rate,
-            rates.rc_rate_pitch,
-            rates.rc_pitch_expo,
-            rates.superexpo,
-            rates.deadband,
-            rates.pitch_rate_limit,
-        ),
-        yaw: rateCurve.getMaxAngularVel(
-            rates.yaw_rate,
-            rates.rc_rate_yaw,
-            rates.rc_yaw_expo,
-            rates.superexpo,
-            rates.yawDeadband,
-            rates.yaw_rate_limit,
-        ),
+        roll: maxAngularVelOf(axisRateCurveParams(rates, "roll")),
+        pitch: maxAngularVelOf(axisRateCurveParams(rates, "pitch")),
+        yaw: maxAngularVelOf(axisRateCurveParams(rates, "yaw")),
     };
 
     const maxRate = Math.max(maxAngularVels.roll, maxAngularVels.pitch, maxAngularVels.yaw);
+
+    // Round up to the nearest 200 like the curve layer does, so the stick-position
+    // dots use the same vertical scale as the curve they sit on.
+    const maxRateRounded = rateCurve.setMaxAngularVel(maxRate);
 
     // Calculate scaling exactly like master
     const curveHeight = canvas.height;
@@ -983,7 +974,7 @@ function updateRatesLabels() {
     );
 
     // Track drawn balloon positions to prevent overlaps
-    const balloonsDirty = [];
+    const balloonsDirty: BalloonBounds[] = [];
 
     // Draw balloon labels at the curve positions (like master)
     const maxAngularVelRoll = `${maxAngularVels.roll.toFixed(0)} deg/s`;
@@ -991,7 +982,7 @@ function updateRatesLabels() {
     const maxAngularVelYaw = `${maxAngularVels.yaw.toFixed(0)} deg/s`;
 
     // Create an array of balloons to draw (like master)
-    const balloons = [
+    const balloons: Balloon[] = [
         {
             value: maxAngularVels.roll,
             draw: () => {
@@ -1038,46 +1029,45 @@ function updateRatesLabels() {
 
     // Add current RC stick values on the left side (like master)
     // Calculate stick values first, then add to balloons array AFTER sorting
-    if (FC.RC && FC.RC.channels && FC.RC.channels[0] && FC.RC.channels[1] && FC.RC.channels[2]) {
+    if (
+        fcStore.rc &&
+        fcStore.rc.channels &&
+        fcStore.rc.channels[0] &&
+        fcStore.rc.channels[1] &&
+        fcStore.rc.channels[2]
+    ) {
+        // Draw the stick-position dots in the unscaled coordinate space so they line up
+        // with the rate curve (drawn without the horizontal textScale) instead of being
+        // squeezed toward the left edge. maxRateRounded matches the curve's vertical scale.
+        ctx.save();
+        ctx.scale(1 / textScale, 1);
+
         // Calculate current stick angular velocities
         const currentRollRate = rateCurve.drawStickPosition(
-            FC.RC.channels[0],
-            rates.roll_rate,
-            rates.rc_rate,
-            rates.rc_expo,
-            rates.superexpo,
-            rates.deadband,
-            rates.roll_rate_limit,
-            maxRate,
+            fcStore.rc.channels[0],
+            axisRateCurveParams(rates, "roll"),
+            maxRateRounded,
             ctx,
-            "#FF8080",
+            getCssVar("--rates-stick-roll"),
         );
 
         const currentPitchRate = rateCurve.drawStickPosition(
-            FC.RC.channels[1],
-            rates.pitch_rate,
-            rates.rc_rate_pitch,
-            rates.rc_pitch_expo,
-            rates.superexpo,
-            rates.deadband,
-            rates.pitch_rate_limit,
-            maxRate,
+            fcStore.rc.channels[1],
+            axisRateCurveParams(rates, "pitch"),
+            maxRateRounded,
             ctx,
-            "#80FF80",
+            getCssVar("--rates-stick-pitch"),
         );
 
         const currentYawRate = rateCurve.drawStickPosition(
-            FC.RC.channels[2],
-            rates.yaw_rate,
-            rates.rc_rate_yaw,
-            rates.rc_yaw_expo,
-            rates.superexpo,
-            rates.yawDeadband,
-            rates.yaw_rate_limit,
-            maxRate,
+            fcStore.rc.channels[2],
+            axisRateCurveParams(rates, "yaw"),
+            maxRateRounded,
             ctx,
-            "#8080FF",
+            getCssVar("--rates-stick-yaw"),
         );
+
+        ctx.restore();
 
         // Sort right-side balloons first (like master)
         balloons.sort((a, b) => b.value - a.value);
@@ -1086,7 +1076,7 @@ function updateRatesLabels() {
         // This prevents them from being reordered
         balloons.push(
             {
-                value: Number.parseInt(currentRollRate),
+                value: Number.parseInt(String(currentRollRate)),
                 draw: () => {
                     drawBalloonLabel(
                         ctx,
@@ -1100,7 +1090,7 @@ function updateRatesLabels() {
                 },
             },
             {
-                value: Number.parseInt(currentPitchRate),
+                value: Number.parseInt(String(currentPitchRate)),
                 draw: () => {
                     drawBalloonLabel(
                         ctx,
@@ -1114,7 +1104,7 @@ function updateRatesLabels() {
                 },
             },
             {
-                value: Number.parseInt(currentYawRate),
+                value: Number.parseInt(String(currentYawRate)),
                 draw: () => {
                     drawBalloonLabel(
                         ctx,
@@ -1147,13 +1137,20 @@ function updateRatesLabels() {
     ctx.restore();
 }
 
-function drawAxisLabel(ctx, text, x, y, align, color) {
-    ctx.fillStyle = color || "#888888";
+function drawAxisLabel(
+    ctx: CanvasRenderingContext2D,
+    text: string,
+    x: number,
+    y: number,
+    align?: CanvasRenderingContext2D["textAlign"],
+    color?: string,
+) {
+    ctx.fillStyle = color || getCssVar("--rates-label-color");
     ctx.textAlign = align || "center";
     ctx.fillText(text, x, y);
 }
 
-function resolveBalloonOverlap(x, y, width, height, balloonsDirty) {
+function resolveBalloonOverlap(x: number, y: number, width: number, height: number, balloonsDirty: BalloonBounds[]) {
     for (const balloon of balloonsDirty) {
         const overlapsH =
             (x >= balloon.left && x <= balloon.right) || (x + width >= balloon.left && x + width <= balloon.right);
@@ -1171,7 +1168,12 @@ function resolveBalloonOverlap(x, y, width, height, balloonsDirty) {
     return y;
 }
 
-function drawBalloonPath(ctx, bounds, pointer, style) {
+function drawBalloonPath(
+    ctx: CanvasRenderingContext2D,
+    bounds: { x: number; y: number; width: number; height: number },
+    pointer: { pointerY: number },
+    style: { align: BalloonAlign; radius: number; offset: number },
+) {
     const { x, y, width, height } = bounds;
     const { pointerY } = pointer;
     const { align, radius, offset } = style;
@@ -1206,7 +1208,15 @@ function drawBalloonPath(ctx, bounds, pointer, style) {
     ctx.stroke();
 }
 
-function drawBalloonLabel(ctx, text, x, y, align, colors, balloonsDirty) {
+function drawBalloonLabel(
+    ctx: CanvasRenderingContext2D,
+    text: string,
+    x: number,
+    y: number,
+    align: BalloonAlign,
+    colors: BalloonColors,
+    balloonsDirty: BalloonBounds[],
+) {
     const DEFAULT_OFFSET = 125;
     const DEFAULT_MARGIN = 5;
     const DEFAULT_RADIUS = 10;
@@ -1243,7 +1253,12 @@ function drawBalloonLabel(ctx, text, x, y, align, colors, balloonsDirty) {
     ctx.fillText(text, x + width / 2, y + (height + fontSize) / 2 - 4);
 }
 
-function drawAngleModeLabels(ctx, canvas, rates, balloonsDirty) {
+function drawAngleModeLabels(
+    ctx: CanvasRenderingContext2D,
+    canvas: HTMLCanvasElement,
+    rates: CurrentRates,
+    balloonsDirty: BalloonBounds[],
+) {
     const textScale = ctx.canvas.clientHeight / ctx.canvas.clientWidth;
 
     // Draw "Angle Mode" label at the bottom right (like master)
@@ -1252,23 +1267,9 @@ function drawAngleModeLabels(ctx, canvas, rates, balloonsDirty) {
         drawAxisLabel(ctx, "Angle Mode", (canvas.width - 10) / textScale, canvas.height - 250, "right");
 
         // Draw angle sensitivity ranges
-        const angleLimit = FC.ADVANCED_TUNING?.levelAngleLimit || 60;
-        const maxAngVelRoll = rateCurve.getMaxAngularVel(
-            rates.roll_rate,
-            rates.rc_rate,
-            rates.rc_expo,
-            rates.superexpo,
-            rates.deadband,
-            rates.roll_rate_limit,
-        );
-        const maxAngVelPitch = rateCurve.getMaxAngularVel(
-            rates.pitch_rate,
-            rates.rc_rate_pitch,
-            rates.rc_pitch_expo,
-            rates.superexpo,
-            rates.deadband,
-            rates.pitch_rate_limit,
-        );
+        const angleLimit = fcStore.advancedTuning?.levelAngleLimit || 60;
+        const maxAngVelRoll = maxAngularVelOf(axisRateCurveParams(rates, "roll"));
+        const maxAngVelPitch = maxAngularVelOf(axisRateCurveParams(rates, "pitch"));
 
         const rcRate = rates.rc_rate;
         const rcRatePitch = rates.rc_rate_pitch;
@@ -1280,7 +1281,7 @@ function drawAngleModeLabels(ctx, canvas, rates, balloonsDirty) {
         const angleCenterSensPitchText = `${angleCenterSensPitch}...${angleLimit}`;
 
         // Calculate offset for balloon placement
-        const getOffsetForBalloon = (value) => {
+        const getOffsetForBalloon = (value: string) => {
             const offset =
                 Math.ceil(ctx.measureText(value).width) / (ctx.canvas.clientWidth / ctx.canvas.clientHeight) + 40;
             return (canvas.width - offset) / textScale;
@@ -1312,8 +1313,8 @@ function drawAngleModeLabels(ctx, canvas, rates, balloonsDirty) {
     }
 }
 
-function drawAxes(ctx, width, height) {
-    ctx.strokeStyle = "#888888";
+function drawAxes(ctx: CanvasRenderingContext2D, width: number, height: number) {
+    ctx.strokeStyle = getCssVar("--rates-label-color");
     ctx.lineWidth = 4;
 
     // Horizontal center line
@@ -1330,19 +1331,27 @@ function drawAxes(ctx, width, height) {
 }
 
 // Bezier math helpers extracted for reuse and reduced complexity
-function getQBezierValue(t, p1, p2, p3) {
+function getQBezierValue(t: number, p1: number, p2: number, p3: number) {
     const iT = 1 - t;
     return iT * iT * p1 + 2 * iT * t * p2 + t * t * p3;
 }
 
-function getQuadraticCurvePoint(startX, startY, cpX, cpY, endX, endY, position) {
+function getQuadraticCurvePoint(
+    startX: number,
+    startY: number,
+    cpX: number,
+    cpY: number,
+    endX: number,
+    endY: number,
+    position: number,
+): Point {
     return {
         x: getQBezierValue(position, startX, cpX, endX),
         y: getQBezierValue(position, startY, cpY, endY),
     };
 }
 
-function getTfromYBezier(y, startY, cpY, endY) {
+function getTfromYBezier(y: number, startY: number, cpY: number, endY: number) {
     const A = startY - 2 * cpY + endY;
     const B = 2 * (cpY - startY);
     const C = startY - y;
@@ -1367,7 +1376,7 @@ function getTfromYBezier(y, startY, cpY, endY) {
     return Math.abs(y - startY) < Math.abs(y - endY) ? 0 : 1;
 }
 
-function getTfromXBezier(x, x0, cx, x1) {
+function getTfromXBezier(x: number, x0: number, cx: number, x1: number) {
     const a = x0 + x1 - 2 * cx;
     const b = 2 * (cx - x0);
     const c = x0 - x;
@@ -1396,7 +1405,12 @@ function getTfromXBezier(x, x0, cx, x1) {
 
 const THROTTLE_LIMIT_TYPES = { OFF: 0, SCALE: 1, CLIP: 2 };
 
-function drawClipModeCurve(context, curve, canvas, throttle) {
+function drawClipModeCurve(
+    context: CanvasRenderingContext2D,
+    curve: CurveParams,
+    canvas: { limitPercent: number; width: number; height: number },
+    throttle: ThrottlePosition,
+): Point {
     const { limitPercent, width: canvasWidth, height: canvasHeight } = canvas;
     const { thrPercent, thrX, mid } = throttle;
     const throttleClipY = canvasHeight * (1 - limitPercent);
@@ -1449,7 +1463,12 @@ function drawClipModeCurve(context, curve, canvas, throttle) {
     return { x: originalThrpos.x, y: Math.max(throttleClipY, originalThrpos.y) };
 }
 
-function drawScaleModeCurve(context, curve, canvas, throttle) {
+function drawScaleModeCurve(
+    context: CanvasRenderingContext2D,
+    curve: CurveParams,
+    canvas: { width: number; height: number },
+    throttle: ThrottlePosition,
+): Point {
     const { width: canvasWidth, height: canvasHeight } = canvas;
     const { thrPercent, thrX, mid } = throttle;
 
@@ -1467,7 +1486,13 @@ function drawScaleModeCurve(context, curve, canvas, throttle) {
     return getQuadraticCurvePoint(curve.midX, curve.midY, curve.midXr, curve.midYr, canvasWidth, curve.topY, t);
 }
 
-function drawThrottlePositionIndicator(context, thrpos, thrPercent, canvasWidth, canvasHeight) {
+function drawThrottlePositionIndicator(
+    context: CanvasRenderingContext2D,
+    thrpos: Point,
+    thrPercent: number,
+    canvasWidth: number,
+    canvasHeight: number,
+) {
     thrpos.x = Math.max(0, Math.min(canvasWidth, thrpos.x));
     thrpos.y = Math.max(0, Math.min(canvasHeight, thrpos.y));
 
@@ -1479,7 +1504,7 @@ function drawThrottlePositionIndicator(context, thrpos, thrPercent, canvasWidth,
     context.save();
     const fontSize = 10;
     context.font = `${fontSize}pt Verdana, Arial, sans-serif`;
-    context.fillStyle = "#888888";
+    context.fillStyle = getCssVar("--rates-label-color");
 
     const realInputThr = thrPercent * 100;
     const outputThr = Math.max(0, Math.min(100, (1 - thrpos.y / canvasHeight) * 100));
@@ -1489,7 +1514,14 @@ function drawThrottlePositionIndicator(context, thrpos, thrPercent, canvasWidth,
     context.restore();
 }
 
-function computeCurveParams(canvasWidth, canvasHeight, mid, hover, expo, scaleFactor) {
+function computeCurveParams(
+    canvasWidth: number,
+    canvasHeight: number,
+    mid: number,
+    hover: number,
+    expo: number,
+    scaleFactor: number,
+) {
     const topY = canvasHeight * (1 - scaleFactor);
     const midX = canvasWidth * mid;
     const midY = canvasHeight * (1 - scaleFactor * hover);
@@ -1512,6 +1544,9 @@ function drawThrottleCurve() {
 
     const canvas = throttleCurveCanvas.value;
     const context = canvas.getContext("2d");
+    if (!context) {
+        return;
+    }
 
     const rect = canvas.getBoundingClientRect();
     if (!rect.height || !rect.width || rect.height === 0 || rect.width === 0) {
@@ -1552,9 +1587,11 @@ function drawThrottleCurve() {
 
     context.clearRect(0, 0, canvasWidth, canvasHeight);
     context.lineWidth = 2;
-    context.strokeStyle = "#ffbb00";
+    context.strokeStyle = getCssVar("--rates-throttle-curve");
 
-    const thrPercent = FC.RC?.channels?.[3] ? Math.max(0, Math.min(1, (FC.RC.channels[3] - 1000) / 1000)) : 0.5;
+    const thrPercent = fcStore.rc?.channels?.[3]
+        ? Math.max(0, Math.min(1, (fcStore.rc.channels[3] - 1000) / 1000))
+        : 0.5;
     const thrX = thrPercent * canvasWidth;
 
     const throttle = { thrPercent, thrX, mid };
@@ -1588,13 +1625,14 @@ function handleModelResize() {
     });
 }
 
-function renderModel(timestamp) {
+function renderModel(timestamp: number) {
     if (!model || !keepRendering) {
         return;
     }
 
-    // Early return if model geometry isn't loaded yet
-    if (!model.model) {
+    // Early return if model geometry isn't loaded yet. model.js assigns `model` in its
+    // loader callback, where TypeScript does not see it, hence the `in` check.
+    if (!("model" in model) || !model.model) {
         animationFrameId = requestAnimationFrame(renderModel);
         return;
     }
@@ -1602,48 +1640,20 @@ function renderModel(timestamp) {
     const delta = timestamp - lastTimestamp;
     lastTimestamp = timestamp;
 
-    const channels = FC.RC?.channels;
+    const channels = fcStore.rc?.channels;
 
     // Only rotate when we have valid RC channel data
     if (channels?.[0] && channels?.[1] && channels?.[2]) {
         const rates = getCurrentRatesSnapshot();
-        const degToRad = (deg) => deg * (Math.PI / 180);
 
         const roll =
-            (delta / 1000) *
-            rateCurve.rcCommandRawToDegreesPerSecond(
-                channels[0],
-                rates.roll_rate,
-                rates.rc_rate,
-                rates.rc_expo,
-                rates.superexpo,
-                rates.deadband,
-                rates.roll_rate_limit,
-            );
+            (delta / 1000) * rateCurve.rcCommandRawToDegreesPerSecond(channels[0], axisRateCurveParams(rates, "roll"));
 
         const pitch =
-            (delta / 1000) *
-            rateCurve.rcCommandRawToDegreesPerSecond(
-                channels[1],
-                rates.pitch_rate,
-                rates.rc_rate_pitch,
-                rates.rc_pitch_expo,
-                rates.superexpo,
-                rates.deadband,
-                rates.pitch_rate_limit,
-            );
+            (delta / 1000) * rateCurve.rcCommandRawToDegreesPerSecond(channels[1], axisRateCurveParams(rates, "pitch"));
 
         const yaw =
-            (delta / 1000) *
-            rateCurve.rcCommandRawToDegreesPerSecond(
-                channels[2],
-                rates.yaw_rate,
-                rates.rc_rate_yaw,
-                rates.rc_yaw_expo,
-                rates.superexpo,
-                rates.yawDeadband,
-                rates.yaw_rate_limit,
-            );
+            (delta / 1000) * rateCurve.rcCommandRawToDegreesPerSecond(channels[2], axisRateCurveParams(rates, "yaw"));
 
         model.rotateBy(-degToRad(pitch), -degToRad(yaw), -degToRad(roll));
     }
@@ -1652,13 +1662,30 @@ function renderModel(timestamp) {
     animationFrameId = requestAnimationFrame(renderModel);
 }
 
-// Watch for changes and redraw
-// Watch for changes and redraw
-watch([ratesType, rcRate, rcRatePitch, rcRateYaw, rollRate, pitchRate, yawRate, rcExpo, rcPitchExpo, rcYawExpo], () => {
-    nextTick(() => {
-        drawRateCurves();
-    });
-});
+// Watch for changes and redraw. The rate limits are read straight off fcStore.rcTuning because
+// they have no scaled computed, but they feed both the curve and the max-velocity labels.
+watch(
+    [
+        ratesType,
+        rcRate,
+        rcRatePitch,
+        rcRateYaw,
+        rollRate,
+        pitchRate,
+        yawRate,
+        rcExpo,
+        rcPitchExpo,
+        rcYawExpo,
+        () => fcStore.rcTuning.roll_rate_limit,
+        () => fcStore.rcTuning.pitch_rate_limit,
+        () => fcStore.rcTuning.yaw_rate_limit,
+    ],
+    () => {
+        nextTick(() => {
+            drawRateCurves();
+        });
+    },
+);
 
 watch([throttleMid, throttleHover, throttleExpo, throttleLimitType, throttleLimitPercent], () => {
     nextTick(() => {
@@ -1666,37 +1693,18 @@ watch([throttleMid, throttleHover, throttleExpo, throttleLimitType, throttleLimi
     });
 });
 
-// Watch for FC.RC_TUNING to become available (initial data load)
-watch(
-    () => FC.RC_TUNING,
-    (newValue) => {
-        if (newValue && newValue.rates_type !== undefined) {
-            nextTick(() => {
-                drawRateCurves();
-                drawThrottleCurve();
-            });
-        }
-    },
-    { immediate: true },
-);
-
-watch(
-    () => JSON.stringify(FC.RC_TUNING),
-    () => emit("change"),
-);
-
 onMounted(() => {
     // Initialize 3D Model for rates preview
     // Wait for MIXER_CONFIG to be available before initializing model
     if (ratesPreviewContainer.value && ratesPreviewCanvas.value) {
-        // Check if FC.MIXER_CONFIG is available, if not wait a bit
+        // Check if fcStore.mixerConfig is available, if not wait a bit
         const initModel = () => {
             // Guard: Return early if refs are null (component unmounted)
             if (!ratesPreviewContainer.value || !ratesPreviewCanvas.value) {
                 return;
             }
 
-            if (!FC.MIXER_CONFIG || FC.MIXER_CONFIG.mixer === undefined) {
+            if (!fcStore.mixerConfig || fcStore.mixerConfig.mixer === undefined) {
                 // Use separate timeout ID for init retries
                 initModelTimeoutId = setTimeout(initModel, 100);
                 return;
@@ -1719,7 +1727,7 @@ onMounted(() => {
 
                 model = new Model(ratesPreviewContainer.value, ratesPreviewCanvas.value);
 
-                // Model automatically loads based on FC.MIXER_CONFIG.mixer
+                // Model automatically loads based on fcStore.mixerConfig.mixer
                 // Give the model a moment to initialize its renderer
                 modelInitTimeout = setTimeout(() => {
                     modelInitTimeout = null; // Clear reference once callback runs
@@ -1764,73 +1772,64 @@ onMounted(() => {
     });
 
     // Poll MSP_RC for live stick data and update rate curve labels + throttle curve
-    rcUpdateInterval = setInterval(() => {
-        MSP.send_message(MSPCodes.MSP_RC, false, false, () => {
-            if (rateCurveLayer1.value) {
-                updateRatesLabels();
-            }
-            drawThrottleCurve();
-        });
-    }, 100); // Update 10 times per second
+    startRcPolling(() => {
+        if (rateCurveLayer1.value) {
+            updateRatesLabels();
+        }
+        drawThrottleCurve();
+    });
 });
 
 // Set defaults for rates type
-const setDefaultsForRatesType = (type) => {
+const setDefaultsForRatesType = (type: number) => {
     switch (type) {
         case RatesType.RACEFLIGHT:
-            FC.RC_TUNING.RC_RATE = 0.37;
-            FC.RC_TUNING.rcPitchRate = 0.37;
-            FC.RC_TUNING.rcYawRate = 0.37;
-            FC.RC_TUNING.roll_rate = 0.8;
-            FC.RC_TUNING.pitch_rate = 0.8;
-            FC.RC_TUNING.yaw_rate = 0.8;
-            FC.RC_TUNING.RC_EXPO = 0.5;
-            FC.RC_TUNING.RC_PITCH_EXPO = 0.5;
-            FC.RC_TUNING.RC_YAW_EXPO = 0.5;
+            fcStore.rcTuning.RC_RATE = 0.37;
+            fcStore.rcTuning.rcPitchRate = 0.37;
+            fcStore.rcTuning.rcYawRate = 0.37;
+            fcStore.rcTuning.roll_rate = 0.8;
+            fcStore.rcTuning.pitch_rate = 0.8;
+            fcStore.rcTuning.yaw_rate = 0.8;
+            fcStore.rcTuning.RC_EXPO = 0.5;
+            fcStore.rcTuning.RC_PITCH_EXPO = 0.5;
+            fcStore.rcTuning.RC_YAW_EXPO = 0.5;
             break;
         case RatesType.ACTUAL:
-            FC.RC_TUNING.RC_RATE = 0.07;
-            FC.RC_TUNING.rcPitchRate = 0.07;
-            FC.RC_TUNING.rcYawRate = 0.07;
-            FC.RC_TUNING.roll_rate = 0.67;
-            FC.RC_TUNING.pitch_rate = 0.67;
-            FC.RC_TUNING.yaw_rate = 0.67;
-            FC.RC_TUNING.RC_EXPO = 0;
-            FC.RC_TUNING.RC_PITCH_EXPO = 0;
-            FC.RC_TUNING.RC_YAW_EXPO = 0;
+            fcStore.rcTuning.RC_RATE = 0.07;
+            fcStore.rcTuning.rcPitchRate = 0.07;
+            fcStore.rcTuning.rcYawRate = 0.07;
+            fcStore.rcTuning.roll_rate = 0.67;
+            fcStore.rcTuning.pitch_rate = 0.67;
+            fcStore.rcTuning.yaw_rate = 0.67;
+            fcStore.rcTuning.RC_EXPO = 0;
+            fcStore.rcTuning.RC_PITCH_EXPO = 0;
+            fcStore.rcTuning.RC_YAW_EXPO = 0;
             break;
         case RatesType.QUICKRATES:
-            FC.RC_TUNING.RC_RATE = 1;
-            FC.RC_TUNING.rcPitchRate = 1;
-            FC.RC_TUNING.rcYawRate = 1;
-            FC.RC_TUNING.roll_rate = 0.67;
-            FC.RC_TUNING.pitch_rate = 0.67;
-            FC.RC_TUNING.yaw_rate = 0.67;
-            FC.RC_TUNING.RC_EXPO = 0;
-            FC.RC_TUNING.RC_PITCH_EXPO = 0;
-            FC.RC_TUNING.RC_YAW_EXPO = 0;
+            fcStore.rcTuning.RC_RATE = 1;
+            fcStore.rcTuning.rcPitchRate = 1;
+            fcStore.rcTuning.rcYawRate = 1;
+            fcStore.rcTuning.roll_rate = 0.67;
+            fcStore.rcTuning.pitch_rate = 0.67;
+            fcStore.rcTuning.yaw_rate = 0.67;
+            fcStore.rcTuning.RC_EXPO = 0;
+            fcStore.rcTuning.RC_PITCH_EXPO = 0;
+            fcStore.rcTuning.RC_YAW_EXPO = 0;
             break;
         case RatesType.BETAFLIGHT:
         case RatesType.KISS:
-            FC.RC_TUNING.RC_RATE = 1;
-            FC.RC_TUNING.rcPitchRate = 1;
-            FC.RC_TUNING.rcYawRate = 1;
-            FC.RC_TUNING.roll_rate = 0.7;
-            FC.RC_TUNING.pitch_rate = 0.7;
-            FC.RC_TUNING.yaw_rate = 0.7;
-            FC.RC_TUNING.RC_EXPO = 0;
-            FC.RC_TUNING.RC_PITCH_EXPO = 0;
-            FC.RC_TUNING.RC_YAW_EXPO = 0;
+            fcStore.rcTuning.RC_RATE = 1;
+            fcStore.rcTuning.rcPitchRate = 1;
+            fcStore.rcTuning.rcYawRate = 1;
+            fcStore.rcTuning.roll_rate = 0.7;
+            fcStore.rcTuning.pitch_rate = 0.7;
+            fcStore.rcTuning.yaw_rate = 0.7;
+            fcStore.rcTuning.RC_EXPO = 0;
+            fcStore.rcTuning.RC_PITCH_EXPO = 0;
+            fcStore.rcTuning.RC_YAW_EXPO = 0;
             break;
     }
 };
-
-// Watch for rates type changes and set default values (only on an actual user change, not on initial mount)
-watch(ratesType, (newType, oldType) => {
-    if (oldType !== undefined && newType !== oldType) {
-        setDefaultsForRatesType(newType);
-    }
-});
 
 onUnmounted(() => {
     // Stop rendering immediately
@@ -1865,12 +1864,6 @@ onUnmounted(() => {
     if (initModelTimeoutId) {
         clearTimeout(initModelTimeoutId);
         initModelTimeoutId = null;
-    }
-
-    // Clear RC update interval
-    if (rcUpdateInterval) {
-        clearInterval(rcUpdateInterval);
-        rcUpdateInterval = null;
     }
 });
 </script>

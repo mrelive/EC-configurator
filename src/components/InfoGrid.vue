@@ -1,12 +1,12 @@
 <template>
-    <dl class="cf-info-grid" :class="gridClass">
+    <dl class="info-grid cf-info-grid" :class="gridClass">
         <template v-for="item in items" :key="item.id || item.i18n || item.label">
             <dt v-if="item.i18n || item.label" :id="item.id">
                 <span v-if="item.i18n">{{ i18n.getMessage(item.i18n) }}</span>
                 <span v-else>{{ item.label }}</span>
             </dt>
 
-            <dd :class="item.class" :id="item.id ? item.id + '-value' : null">
+            <dd :class="item.class" :id="item.id ? item.id + '-value' : undefined">
                 <slot :name="item.slotName || item.id">
                     <span v-if="item.html" v-html="item.html"></span>
                     <span v-else-if="item.value !== undefined">{{ item.value }}</span>
@@ -16,31 +16,46 @@
     </dl>
 </template>
 
-<script setup>
+<script setup lang="ts">
+import type { PropType } from "vue";
 import { i18n } from "../js/localization";
+
+/** A row: a label (translated via `i18n`, or literal) and a value (text, HTML, or a named slot). */
+export interface InfoGridItem {
+    id?: string;
+    i18n?: string;
+    label?: string;
+    class?: string;
+    slotName?: string;
+    html?: string;
+    value?: string | number;
+}
 
 defineProps({
     items: {
-        type: Array,
+        type: Array as PropType<InfoGridItem[]>,
         default: () => [],
     },
     gridClass: String,
 });
 </script>
 
-<style scoped lang="less">
-.cf-info-grid {
+<style lang="less">
+/* SetupTab has .cf-info-grid elements of its own; .info-grid keeps these rules on this component. */
+.info-grid.cf-info-grid {
     display: grid;
     grid-template-columns: max-content 1fr;
     gap: 0.25rem 1rem;
     align-items: center;
     width: 100%;
-}
-.cf-info-grid dt {
-    font-weight: bold;
-    margin: 0;
-}
-.cf-info-grid dd {
-    margin: 0;
+
+    dt {
+        font-weight: bold;
+        margin: 0;
+    }
+
+    dd {
+        margin: 0;
+    }
 }
 </style>

@@ -1,43 +1,53 @@
 <template>
-    <dialog ref="dialogRef" class="dialogCopyProfile" @cancel.prevent="cancel">
-        <h3 class="dialogCopyProfileTitle">{{ title }}</h3>
-        <div class="content">
-            <div v-if="note" class="dialogCopyProfile-note" v-html="note"></div>
+    <UModal :open="open" :title="title" :close="false" :dismissible="false">
+        <template #body>
+            <div class="flex flex-col gap-4">
+                <div v-if="note" v-html="note"></div>
 
-            <div v-if="profileOptions && profileOptions.length" class="contentProfile">
-                <div>
-                    <span>{{ profileText }}</span>
-                    <USelect v-model="selectedProfile" :items="profileOptions" class="min-w-40" />
-                </div>
-            </div>
+                <SettingRow v-if="profileOptions && profileOptions.length" :label="profileText">
+                    <USelect
+                        v-model="selectedProfile"
+                        :items="profileOptions"
+                        class="min-w-40"
+                        :ui="{ content: 'z-3002' }"
+                    />
+                </SettingRow>
 
-            <div v-if="rateOptions && rateOptions.length" class="contentRateProfile">
-                <div>
-                    <span>{{ rateProfileText }}</span>
-                    <USelect v-model="selectedRateProfile" :items="rateOptions" class="min-w-40" />
-                </div>
+                <SettingRow v-if="rateOptions && rateOptions.length" :label="rateProfileText">
+                    <USelect
+                        v-model="selectedRateProfile"
+                        :items="rateOptions"
+                        class="min-w-40"
+                        :ui="{ content: 'z-3002' }"
+                    />
+                </SettingRow>
             </div>
-        </div>
-        <div class="buttons">
-            <button type="button" class="dialogCopyProfile-confirmbtn regular-button" @click.prevent="confirm">
-                {{ confirmText }}
-            </button>
-            <button type="button" class="dialogCopyProfile-cancelbtn regular-button" @click.prevent="cancel">
-                {{ cancelText }}
-            </button>
-        </div>
-    </dialog>
+        </template>
+        <template #footer>
+            <div class="flex gap-2 justify-end w-full">
+                <UButton color="neutral" variant="soft" @click="cancel">{{ cancelText }}</UButton>
+                <UButton @click="confirm">{{ confirmText }}</UButton>
+            </div>
+        </template>
+    </UModal>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref } from "vue";
+import type { PropType } from "vue";
 import { i18n } from "@/js/localization";
+import SettingRow from "../elements/SettingRow.vue";
+
+interface ProfileOption {
+    label: string;
+    value: number;
+}
 
 const props = defineProps({
     title: { type: String, default: "" },
     note: { type: String, default: "" },
-    profileOptions: { type: Array, default: () => [] },
-    rateOptions: { type: Array, default: () => [] },
+    profileOptions: { type: Array as PropType<ProfileOption[]>, default: () => [] },
+    rateOptions: { type: Array as PropType<ProfileOption[]>, default: () => [] },
     profileText: { type: String, default: () => i18n.getMessage("dialogCopyProfileText") },
     rateProfileText: { type: String, default: () => i18n.getMessage("dialogCopyRateProfileText") },
     confirmText: { type: String, default: () => i18n.getMessage("dialogCopyProfileConfirm") },
@@ -46,22 +56,23 @@ const props = defineProps({
 
 const emit = defineEmits(["confirm", "cancel"]);
 
-const dialogRef = ref(null);
-const selectedProfile = ref(null);
-const selectedRateProfile = ref(null);
+const open = ref(false);
+const selectedProfile = ref<number | undefined>(undefined);
+const selectedRateProfile = ref<number | undefined>(undefined);
 
 const show = () => {
-    selectedProfile.value = props.profileOptions?.length ? props.profileOptions[0].value : null;
-    selectedRateProfile.value = props.rateOptions?.length ? props.rateOptions[0].value : null;
-    dialogRef.value?.showModal();
+    selectedProfile.value = props.profileOptions?.length ? props.profileOptions[0].value : undefined;
+    selectedRateProfile.value = props.rateOptions?.length ? props.rateOptions[0].value : undefined;
+    open.value = true;
 };
 
 const close = () => {
-    dialogRef.value?.close();
+    open.value = false;
 };
 
 const confirm = () => {
-    emit("confirm", { profile: selectedProfile.value, rateProfile: selectedRateProfile.value });
+    // null, not undefined, is the payload contract the consumers in useDialog.ts see.
+    emit("confirm", { profile: selectedProfile.value ?? null, rateProfile: selectedRateProfile.value ?? null });
     close();
 };
 
@@ -73,31 +84,5 @@ const cancel = () => {
 defineExpose({
     show,
     close,
-    dialog: dialogRef,
 });
 </script>
-
-<style scoped>
-.dialogCopyProfile {
-    width: fit-content;
-    max-width: 500px;
-}
-
-.dialogCopyProfile-note {
-    margin-top: 10px;
-}
-
-.contentProfile,
-.contentRateProfile {
-    margin-top: 20px;
-}
-
-.dialogCopyProfile-confirmbtn {
-    margin: 0;
-    margin-right: 12px;
-}
-
-.dialogCopyProfile-cancelbtn {
-    margin: 0;
-}
-</style>

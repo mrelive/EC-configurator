@@ -1,28 +1,32 @@
 /// <reference types="vitest" />
-import { defineConfig } from "vite";
+import { defineConfig, normalizePath } from "vite";
 import vue from "@vitejs/plugin-vue";
 import path from "node:path";
 import { readFileSync, existsSync } from "node:fs";
-import copy from "rollup-plugin-copy";
-import pkg from "./package.json";
+import { viteStaticCopy } from "vite-plugin-static-copy";
+import pkg from "./package.json" with { type: "json" };
 import * as child from "child_process";
 import { VitePWA } from "vite-plugin-pwa";
 import { resolve } from "path";
 import ui from "@nuxt/ui/vite";
+import settingsSearchIndexPlugin from "./scripts/vite-plugin-settings-search.mjs";
 import nuxtUiViteOptions from "./nuxt-ui.vite.js";
 
-const commitHash = child.execSync("git rev-parse --short HEAD").toString().trim();
+let commitHash = "dev";
+try {
+    commitHash = child.execSync("git rev-parse --short HEAD").toString().trim();
+} catch {
+    commitHash = pkg.version || "dev";
+}
 
 const devHostname = process.env.BF_DEV_HOSTNAME || "local.betaflight.com";
 
-// Check if SSL certificates exist. Skipped when running under `tauri dev`
-// because the native webview needs a predictable HTTP endpoint and won't
-// trust the mkcert root out of the box.
+// Check if SSL certificates exist. Skipped when running under `tauri dev` or in cloud web environment.
 const certPath = "./local.betaflight.com.pem";
 const keyPath = "./local.betaflight.com-key.pem";
 const tauriDev = process.env.TAURI_DEV === "1";
-const certsExist = !tauriDev && existsSync(certPath) && existsSync(keyPath);
-const serverPort = certsExist ? 8443 : 8080;
+const certsExist = !tauriDev && process.env.ENABLE_HTTPS === "1" && existsSync(certPath) && existsSync(keyPath);
+const serverPort = Number(process.env.PORT) || 3000;
 
 if (tauriDev) {
     console.log("⚙ TAURI_DEV=1 — forcing HTTP mode for the Tauri shell");
@@ -118,6 +122,53 @@ function serveLocalesPlugin() {
     };
 }
 
+/**
+ * The radio-emulator popup is a secondary MPA entry, not an installable page.
+ * VitePWA injects `<link rel="manifest" href="./manifest.webmanifest">` into every
+ * HTML entry, which resolves relative to the popup's own directory and 404s.
+ * Strip it from everything except the main entry.
+ * Registered after VitePWA so its `post` hook runs last.
+ * @returns {import("vite").Plugin}
+ */
+function stripManifestFromSecondaryEntriesPlugin() {
+    return {
+        name: "strip-manifest-from-secondary-entries",
+        // `enforce`/`order` post so this runs after vite-plugin-pwa:build has injected the link.
+        enforce: "post",
+        apply: "build",
+        transformIndexHtml: {
+            order: "post",
+            handler(html, ctx) {
+                if (ctx.path === "/index.html") {
+                    return html;
+                }
+                return html.replace(/<link rel="manifest"[^>]*>/g, "");
+            },
+        },
+    };
+}
+
+// These modules are each imported dynamically in one place purely to break an import
+// cycle (see the comment at every call site), never to split them into their own chunk.
+// Rolldown reports INEFFECTIVE_DYNAMIC_IMPORT because they are also imported statically
+// elsewhere -- which is the intent -- so the chunking advice does not apply. Only these
+// are silenced, so a genuinely pointless dynamic import added later still warns.
+const CYCLE_BREAKING_DYNAMIC_IMPORTS = [
+    "src/js/msp.js",
+    "src/js/msp.ts",
+    "src/js/serial_backend.js",
+    "src/js/serial_backend.ts",
+    "src/js/tab_switch.js",
+    "src/js/tab_switch.ts",
+];
+
+function isCycleBreakingImport(warning) {
+    // The message is prefixed with the (colourised) warning code, so match on the
+    // "<id> is dynamically imported by" phrase rather than the start of the string.
+    const message = warning.message ?? "";
+    return CYCLE_BREAKING_DYNAMIC_IMPORTS.some((id) => message.includes(`${id} is dynamically imported by`));
+}
+
 export default defineConfig({
     base: "./", // Important for production APK asset paths
     define: {
@@ -128,39 +179,55 @@ export default defineConfig({
     build: {
         rollupOptions: {
             input: {
-                main: resolve(__dirname, "src/index.html"),
-                receiver_msp: resolve(__dirname, "src/components/tabs/receiver-msp/receiver_msp.html"),
+                main: resolve(import.meta.dirname, "src/index.html"),
+                receiver_msp: resolve(import.meta.dirname, "src/components/tabs/receiver-msp/receiver_msp.html"),
+                log_window: resolve(import.meta.dirname, "src/components/log/log_window.html"),
+            },
+            onwarn(warning, defaultHandler) {
+                if (warning.code === "INEFFECTIVE_DYNAMIC_IMPORT" && isCycleBreakingImport(warning)) {
+                    return;
+                }
+                defaultHandler(warning);
             },
         },
     },
     test: {
-        include: ["test/**/*.test.{js,mjs,cjs}"],
+        include: ["test/**/*.test.{js,mjs,cjs,ts,mts}"],
         environment: "jsdom",
         setupFiles: ["test/setup.js"],
         root: ".",
         alias: {
-            "/images/": `${path.resolve(__dirname, "src/images")}/`,
+            "/images/": `${path.resolve(import.meta.dirname, "src/images")}/`,
         },
     },
     plugins: [
+        settingsSearchIndexPlugin(),
         vue(),
         ui(nuxtUiViteOptions),
         serveLocalesPlugin(),
-        copy({
+        // Copy runtime assets into the build output. Only the build-time
+        // plugin is kept (the dev server serves these via serveLocalesPlugin /
+        // Vite root, matching the previous rollup-plugin-copy behaviour).
+        // `src` globs are absolute because the Vite root is `src/`, so
+        // repo-root-relative patterns would otherwise resolve under `src/`.
+        // Only assets that are fetched by URL at runtime belong here. Never add
+        // `src/components`: those files are bundled, and copying them raw runs on
+        // `writeBundle` — after the bundle is emitted — so the raw
+        // `receiver-msp/receiver_msp.html` would overwrite the built MPA entry and
+        // leave the popup loading an untransformed module (bare `vue` specifier).
+        ...viteStaticCopy({
             targets: [
-                { src: "locales/**/*", dest: "src/dist/locales" },
-                { src: "resources/**/*", dest: "src/dist/resources" },
-                { src: "src/images/**/*", dest: "src/dist/images" },
-                { src: "src/components/**/*", dest: "src/dist/components" },
+                { src: normalizePath(path.resolve(import.meta.dirname, "locales")), dest: "." },
+                { src: normalizePath(path.resolve(import.meta.dirname, "resources")), dest: "." },
+                { src: normalizePath(path.resolve(import.meta.dirname, "src/images")), dest: "." },
             ],
-            hook: "writeBundle",
-        }),
+        }).filter((plugin) => plugin.name === "vite-plugin-static-copy:build"),
         VitePWA({
             registerType: "prompt",
             workbox: {
                 globPatterns: ["**/*.{js,css,html,ico,png,svg,json,mcm,gltf}"],
-                // 5MB
-                maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+                // 15MB for unminified preview/dev bundle tolerance
+                maximumFileSizeToCacheInBytes: 15 * 1024 * 1024,
             },
             includeAssets: ["favicon.ico", "apple-touch-icon.png"],
             manifest: {
@@ -182,31 +249,34 @@ export default defineConfig({
                 ],
             },
         }),
+        stripManifestFromSecondaryEntriesPlugin(),
     ],
     // Absolute root so @nuxt/ui's template aliases (#build/ui.css, etc.) resolve to
     // absolute paths; a relative root yields relative aliases and Vite warns about duplicated modules.
-    root: path.resolve(__dirname, "src"),
+    root: path.resolve(import.meta.dirname, "src"),
     resolve: {
         alias: {
-            "@": path.resolve(__dirname, "src"),
+            "@": path.resolve(import.meta.dirname, "src"),
             "/src": path.resolve(process.cwd(), "src"),
-            vue: path.resolve(__dirname, "node_modules/vue/dist/vue.esm-bundler.js"),
+            vue: path.resolve(import.meta.dirname, "node_modules/vue/dist/vue.esm-bundler.js"),
         },
     },
     server: {
         port: serverPort,
         strictPort: true,
+        host: "0.0.0.0",
+        allowedHosts: true,
         ...(certsExist && {
             https: {
                 key: readFileSync(keyPath),
                 cert: readFileSync(certPath),
             },
         }),
-        host: "0.0.0.0", // Listen on all network interfaces for Android device access
-        allowedHosts: certsExist ? [devHostname] : ["localhost"],
     },
     preview: {
         port: serverPort,
         strictPort: true,
+        host: "0.0.0.0",
+        allowedHosts: true,
     },
 });

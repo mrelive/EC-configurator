@@ -9,7 +9,7 @@
     </UTooltip>
 </template>
 
-<script>
+<script lang="ts">
 import { defineComponent } from "vue";
 
 export default defineComponent({
@@ -26,14 +26,14 @@ export default defineComponent({
 });
 </script>
 
-<style scoped>
+<style lang="less">
 .port-utilization {
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
-}
 
-.value {
-    font-variant-numeric: tabular-nums;
+    .value {
+        font-variant-numeric: tabular-nums;
+    }
 }
 </style>

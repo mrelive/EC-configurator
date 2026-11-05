@@ -2,7 +2,7 @@
     <BaseTab tab-name="osd">
         <div class="content_wrapper pb-15">
             <div class="tab_title">{{ $t("osdSetupTitle") }}</div>
-            <WikiButton docUrl="OSD" />
+            <WikiButton docUrl="osd" />
 
             <!-- Warning: No OSD Chip Detected -->
             <UiBox
@@ -34,7 +34,12 @@
                 <div class="grid-row grid-box col4">
                     <!-- Elements Column -->
                     <div class="col-span-1">
-                        <UiBox :title="$t('osdSetupElementsTitle')" :help="$t('osdSectionHelpElements')">
+                        <UiBox
+                            :title="$t('osdSetupElementsTitle')"
+                            type="neutral"
+                            collapsible
+                            :help="$t('osdSectionHelpElements')"
+                        >
                             <template #title>
                                 <HelpIcon :text="$t('osdSetupProfilesTitle')" />
                                 <span
@@ -49,7 +54,7 @@
                                 v-model="elementSearchQuery"
                                 :placeholder="$t('search') + '...'"
                                 icon="i-lucide-search"
-                                size="sm"
+                                size="xs"
                                 class="mb-2"
                             />
                             <!-- Element list -->
@@ -60,7 +65,7 @@
                                     class="flex items-center gap-1 py-0.5 border-b border-neutral-500/30 last:border-b-0"
                                     :class="{ 'bg-neutral-500/15': isFieldHighlighted(field) }"
                                     @mouseenter="highlightField(field)"
-                                    @mouseleave="unhighlightField(field)"
+                                    @mouseleave="unhighlightField()"
                                 >
                                     <!-- Profile checkboxes -->
                                     <div class="flex gap-1 shrink-0">
@@ -69,6 +74,12 @@
                                                 type="checkbox"
                                                 :checked="field.isVisible[profileIdx - 1]"
                                                 @change="toggleFieldVisibility(field.index, profileIdx - 1, $event)"
+                                                :aria-label="
+                                                    $t('osdToggleElementVisibility', {
+                                                        element: $t(field.text, field.textParams),
+                                                        profile: profileIdx,
+                                                    })
+                                                "
                                                 class="size-4"
                                             />
                                         </template>
@@ -84,7 +95,7 @@
                                         v-if="field.variants && field.variants.length > 1"
                                         :model-value="field.variant"
                                         @update:model-value="
-                                            (v) => {
+                                            (v: number) => {
                                                 field.variant = v;
                                                 onVariantChange(field);
                                             }
@@ -175,6 +186,7 @@
                                     @mousedown="onPreviewMouseDown"
                                     @mouseup="onPreviewMouseUp"
                                     @mouseleave="onPreviewMouseUp"
+                                    @dragleave="onPreviewDragLeave"
                                 >
                                     <!-- Preview elements rendered as rows/cells -->
                                     <div class="flex tab-osd-row" v-for="(row, rIdx) in previewRows" :key="rIdx">
@@ -189,7 +201,6 @@
                                             :draggable="cell.field?.positionable"
                                             @dragstart="onDragStart($event, cell)"
                                             @dragover.prevent="onDragOverCell($event)"
-                                            @dragleave="onDragLeaveCell($event)"
                                             @drop.prevent="onDropCell($event)"
                                             @dragend="onPreviewMouseUp"
                                             @mouseenter="onCellMouseEnter(cell)"
@@ -200,6 +211,14 @@
                                                     cell.img ||
                                                     'data:image/svg+xml;utf8,<svg width=\'12\' height=\'18\' xmlns=\'http://www.w3.org/2000/svg\'></svg>'
                                                 "
+                                                draggable="false"
+                                                alt=""
+                                                aria-hidden="true"
+                                            />
+                                            <img
+                                                v-if="dragGhostImages.has(rIdx * osdStore.displaySize.x + cIdx)"
+                                                class="tab-osd-drag-ghost"
+                                                :src="dragGhostImages.get(rIdx * osdStore.displaySize.x + cIdx)"
                                                 draggable="false"
                                                 alt=""
                                                 aria-hidden="true"
@@ -222,7 +241,7 @@
                     <!-- Settings Column -->
                     <div class="col-span-1">
                         <!-- Active Profile Selector -->
-                        <UiBox :title="$t('osdSetupSelectedProfileTitle')">
+                        <UiBox :title="$t('osdSetupSelectedProfileTitle')" type="neutral" collapsible>
                             <SettingRow :label="$t('osdSetupSelectedProfileTitle')">
                                 <USelect v-model="activeProfile" :items="profileOptions" size="xs" />
                             </SettingRow>
@@ -233,15 +252,21 @@
 
                         <!-- Video Format (MAX7456 only) -->
                         <UiBox
-                            v-if="osdStore.state.haveMax7456Configured || osdStore.state.isMspDevice"
+                            v-if="
+                                osdStore.state.haveMax7456Configured ||
+                                osdStore.state.haveFbOsdConfigured ||
+                                osdStore.state.isMspDevice
+                            "
                             :title="$t('osdSetupVideoFormatTitle')"
+                            type="neutral"
+                            collapsible
                             :help="$t('osdSectionHelpVideoMode')"
                         >
                             <SettingRow :label="$t('osdSetupVideoFormatTitle')">
                                 <USelect
-                                    :model-value="osdStore.videoSystem"
+                                    :model-value="osdStore.videoSystem ?? undefined"
                                     @update:model-value="
-                                        (v) => {
+                                        (v: number) => {
                                             osdStore.videoSystem = v;
                                             onVideoSystemChange();
                                         }
@@ -250,19 +275,75 @@
                                     size="xs"
                                 />
                             </SettingRow>
+                            <SettingRow
+                                v-if="osdProtocolOptions.length"
+                                :label="$t('osdProtocol')"
+                                :help="$t('osdProtocolHelp')"
+                            >
+                                <USelect
+                                    :model-value="osdProtocol ?? undefined"
+                                    @update:model-value="(v: string) => (osdProtocol = v)"
+                                    :items="osdProtocolOptions"
+                                    :disabled="!osdPortWritable"
+                                    size="xs"
+                                    class="min-w-40"
+                                />
+                            </SettingRow>
+                            <SettingRow
+                                v-if="osdPortAvailable"
+                                :label="$t('osdSerialPort')"
+                                :help="$t('osdSerialPortHelp')"
+                            >
+                                <USelect
+                                    v-model="osdPortIdentifier"
+                                    :items="osdPortOptions"
+                                    :disabled="!osdPortWritable"
+                                    size="xs"
+                                    class="min-w-40"
+                                />
+                            </SettingRow>
+                            <SettingRow
+                                v-if="customTextPortAvailable"
+                                :label="$t('osdCustomTextSerialPort')"
+                                :help="$t('osdCustomTextSerialPortHelp')"
+                            >
+                                <USelect
+                                    v-model="customTextPortIdentifier"
+                                    :items="customTextPortOptions"
+                                    :disabled="!customTextPortWritable"
+                                    size="xs"
+                                    class="min-w-40"
+                                />
+                            </SettingRow>
+                            <SettingRow
+                                v-if="customTextPortAvailable"
+                                :label="$t('osdCustomTextSerialBaud')"
+                                :help="$t('osdCustomTextSerialBaudHelp')"
+                            >
+                                <USelect
+                                    :model-value="customTextBaud ?? undefined"
+                                    @update:model-value="(v: string) => (customTextBaud = v)"
+                                    :items="customTextBaudOptions"
+                                    :disabled="!customTextPortWritable || !customTextPortAssigned"
+                                    size="xs"
+                                    class="min-w-40"
+                                />
+                            </SettingRow>
                         </UiBox>
 
                         <!-- Units -->
                         <UiBox
                             v-if="osdStore.state.haveOsdFeature"
                             :title="$t('osdSetupUnitsTitle')"
+                            type="neutral"
+                            collapsible
                             :help="$t('osdSectionHelpUnits')"
                         >
                             <SettingRow :label="$t('osdSetupUnitsTitle')">
                                 <USelect
-                                    :model-value="osdStore.unitMode"
+                                    :model-value="osdStore.unitMode ?? undefined"
                                     @update:model-value="
-                                        (v) => {
+                                        (v: number) => {
                                             osdStore.unitMode = v;
                                             onUnitModeChange();
                                         }
@@ -277,6 +358,8 @@
                         <UiBox
                             v-if="osdStore.state.haveOsdFeature && osdStore.timers.length > 0"
                             :title="$t('osdSetupTimersTitle')"
+                            type="neutral"
+                            collapsible
                             :help="$t('osdSectionHelpTimers')"
                         >
                             <div
@@ -289,9 +372,9 @@
                                     <USelect
                                         :model-value="timer.src"
                                         @update:model-value="
-                                            (v) => {
+                                            (v: number) => {
                                                 timer.src = v;
-                                                onTimerChange(timer);
+                                                onTimerChange();
                                             }
                                         "
                                         :items="timerSourceItems"
@@ -302,9 +385,9 @@
                                     <USelect
                                         :model-value="timer.precision"
                                         @update:model-value="
-                                            (v) => {
+                                            (v: number) => {
                                                 timer.precision = v;
-                                                onTimerChange(timer);
+                                                onTimerChange();
                                             }
                                         "
                                         :items="timerPrecisionItems"
@@ -321,7 +404,7 @@
                                         size="xs"
                                         orientation="vertical"
                                         class="w-16"
-                                        @update:model-value="onTimerChange(timer)"
+                                        @update:model-value="onTimerChange()"
                                     />
                                 </SettingRow>
                             </div>
@@ -331,6 +414,8 @@
                         <UiBox
                             v-if="osdStore.state.haveOsdFeature && alarmEntries.length > 0"
                             :title="$t('osdSetupAlarmsTitle')"
+                            type="neutral"
+                            collapsible
                             :help="$t('osdSectionHelpAlarms')"
                         >
                             <div
@@ -357,6 +442,8 @@
                         <UiBox
                             v-if="osdStore.state.haveOsdFeature && sortedWarnings.length > 0"
                             :title="$t('osdSetupWarningsTitle')"
+                            type="neutral"
+                            collapsible
                             :help="$t('osdSectionHelpWarnings')"
                         >
                             <div
@@ -367,12 +454,12 @@
                                 <USwitch
                                     :model-value="warning.enabled"
                                     @update:model-value="
-                                        (v) => {
+                                        (v: boolean) => {
                                             warning.enabled = v;
                                             onWarningChange();
                                         }
                                     "
-                                    size="sm"
+                                    size="xs"
                                 />
                                 <span class="text-xs" :title="warning.desc ? $t(warning.desc) : undefined">{{
                                     $t(warning.text, warning.textParams)
@@ -384,6 +471,8 @@
                         <UiBox
                             v-if="osdStore.state.haveOsdFeature && sortedStatItems.length > 0"
                             :title="$t('osdSetupStatsTitle')"
+                            type="neutral"
+                            collapsible
                             :help="$t('osdSectionHelpStats')"
                         >
                             <div
@@ -394,12 +483,12 @@
                                 <USwitch
                                     :model-value="stat.enabled"
                                     @update:model-value="
-                                        (v) => {
+                                        (v: boolean) => {
                                             stat.enabled = v;
-                                            onStatChange(stat);
+                                            onStatChange();
                                         }
                                     "
-                                    size="sm"
+                                    size="xs"
                                 />
                                 <span class="text-xs" :title="stat.desc ? $t(stat.desc) : undefined">{{
                                     $t(stat.text, stat.textParams)
@@ -410,23 +499,19 @@
                 </div>
 
                 <!-- Font Manager Dialog -->
-                <dialog ref="fontManagerDialog" class="html-dialog w-[750px] h-fit">
-                    <div class="flex h-12 bg-elevated border-b border-default">
-                        <div class="flex-1 flex items-center px-4 font-semibold">
-                            {{ $t("osdSetupFontManagerTitle") }}
-                        </div>
-                        <UButton
-                            @click="closeFontManager"
-                            icon="i-lucide-x"
-                            variant="ghost"
-                            color="neutral"
-                            size="sm"
-                            class="my-auto mr-2"
-                        />
-                    </div>
-                    <div class="p-5">
+                <UModal
+                    :open="fontManagerOpen"
+                    :title="$t('osdSetupFontManagerTitle')"
+                    :ui="{ content: 'w-[750px]' }"
+                    @update:open="(value: boolean) => !value && closeFontManager()"
+                >
+                    <template #body>
                         <h1 class="text-lg font-bold mb-1">{{ $t("osdSetupFontPresets") }}</h1>
-                        <div class="flex flex-wrap gap-0 my-3" ref="fontPreviewContainer">
+                        <div
+                            class="flex flex-wrap gap-0 my-3"
+                            :class="{ 'bg-neutral-500': isSmallFontLoaded }"
+                            ref="fontPreviewContainer"
+                        >
                             <img
                                 v-for="(url, charIdx) in fontCharacterUrls"
                                 :key="charIdx"
@@ -442,14 +527,15 @@
                                 v-model="selectedFontPreset"
                                 :items="fontPresetSelectItems"
                                 :portal="false"
-                                size="sm"
+                                :ui="{ content: 'z-10' }"
+                                size="xs"
                                 class="min-w-40"
                             />
                             <span>{{ $t("osdSetupFontPresetsSelectorOr") }}</span>
-                            <UButton @click="loadCustomFontFile()" size="sm">
+                            <UButton @click="loadCustomFontFile()" size="xs">
                                 {{ $t("osdSetupOpenFont") }}
                             </UButton>
-                            <span class="text-sm opacity-60">(.mcm)</span>
+                            <span class="text-sm opacity-60"></span>
                         </div>
 
                         <!-- Logo customization -->
@@ -477,21 +563,23 @@
                         </div>
 
                         <div class="mb-3">
-                            <UButton @click="replaceLogoImage()" size="sm">
+                            <UButton @click="replaceLogoImage()" size="xs">
                                 <span v-html="$t('osdSetupCustomLogoOpenImageButton')"></span>
                             </UButton>
                         </div>
 
-                        <div class="tab-osd-upload-progress mb-3">
-                            <progress class="tab-osd-progress-bar" :value="uploadProgress" min="0" max="100"></progress>
-                            <div class="tab-osd-progress-label">{{ uploadProgressLabel }}</div>
+                        <div class="relative mb-3">
+                            <UProgress :model-value="uploadProgress" :max="100" size="2xl" color="warning" />
+                            <div class="absolute inset-0 flex items-center justify-center text-xs font-bold text-white">
+                                {{ uploadProgressLabel }}
+                            </div>
                         </div>
 
-                        <UButton @click="flashFont()" color="success" size="sm">
+                        <UButton @click="flashFont()" color="success" size="xs">
                             {{ $t("osdSetupUploadFont") }}
                         </UButton>
-                    </div>
-                </dialog>
+                    </template>
+                </UModal>
             </div>
         </div>
 
@@ -502,18 +590,20 @@
                     :disabled="!osdStore.state.isMax7456FontDeviceDetected"
                     @click="openFontManager()"
                     variant="soft"
+                    size="xs"
                 >
                     {{ $t("osdSetupFontManagerTitle") }}
                 </UButton>
-                <UFieldGroup size="sm" orientation="horizontal" class="flex!">
-                    <UButton @click="saveConfig()" :disabled="!osdStore.dirty || isSaving">
+                <UFieldGroup size="xs" orientation="horizontal" class="flex!">
+                    <UButton @click="savePrimaryAction()" :disabled="!portsOrConfigDirty || isSaving" size="xs">
                         {{ saveButtonText }}
                     </UButton>
                     <UDropdownMenu v-slot="{ open }" :items="saveMenuItems" :content="{ align: 'end', side: 'top' }">
                         <UButton
-                            :disabled="!osdStore.dirty || isSaving"
+                            :disabled="!portsOrConfigDirty || isSaving"
                             :icon="open ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
                             square
+                            size="xs"
                         />
                     </UDropdownMenu>
                 </UFieldGroup>
@@ -522,12 +612,79 @@
     </BaseTab>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
-import { useOsdStore } from "@/stores/osd";
+import { useOsdStore, type OsdDisplayItem, type OsdPreview, type OsdTextParams } from "@/stores/osd";
 import { useFlightControllerStore } from "@/stores/fc";
-import { useOsdPreview } from "@/composables/useOsdPreview";
+import {
+    useOsdPreview,
+    clampStringPreviewPosition,
+    clampArrayPreviewPosition,
+    isStringArrayPreview,
+    type OsdDisplaySize,
+    type PreviewCell,
+} from "@/composables/useOsdPreview";
 import { useOsdRuler } from "@/composables/useOsdRuler";
+import { useBuildOptions } from "@/composables/useBuildOptions";
+import { useTransientLabel } from "@/composables/useTransientLabel";
+import { useSaving } from "@/composables/useSaving";
+import { useReboot } from "@/composables/useReboot";
+import { useOsdFontUpload } from "@/composables/osd/useOsdFontUpload";
+import { useFeaturePort } from "@/composables/ports/useFeaturePort";
+import { usePortConflicts } from "@/composables/ports/usePortConflicts";
+import { PORT_NONE } from "@/composables/ports/portNames";
+import { runTabLoad } from "@/composables/useTabLoad";
+
+// From API 1.49 both live on the OSD parameter group. The bit osd_uart sets in the synthesised
+// mask follows the display port device, and on MSP DisplayPort it is the shared MSP bit, so the
+// setting is the only reliable read either way.
+const {
+    available: osdPortAvailable,
+    writable: osdPortWritable,
+    options: osdPortOptions,
+    selectedIdentifier: osdPortIdentifier,
+    changed: osdPortChanged,
+    conflict: osdPortConflict,
+    selection: osdPortSelection,
+    load: loadOsdPort,
+    write: writeOsdPort,
+    selectedProtocol: osdProtocol,
+    protocolOptions: osdProtocolOptions,
+} = useFeaturePort({
+    setting: "osd_uart",
+    protocol: { setting: "osd_displayport_device" },
+});
+
+const {
+    available: customTextPortAvailable,
+    writable: customTextPortWritable,
+    options: customTextPortOptions,
+    selectedIdentifier: customTextPortIdentifier,
+    baudOptions: customTextBaudOptions,
+    selectedBaud: customTextBaud,
+    changed: customTextPortChanged,
+    conflict: customTextPortConflict,
+    selection: customTextPortSelection,
+    load: loadCustomTextPort,
+    write: writeCustomTextPort,
+} = useFeaturePort({
+    setting: "osd_custom_text_uart",
+    baud: { setting: "osd_custom_text_baud" },
+});
+
+const { confirmPortConflicts } = usePortConflicts(
+    () => [osdPortConflict, customTextPortConflict],
+    () => [osdPortSelection, customTextPortSelection],
+);
+
+const customTextPortAssigned = computed(() => customTextPortIdentifier.value !== PORT_NONE);
+
+// A UART assignment only takes effect at serial init, so a pending port change turns the primary
+// button into Save and Reboot instead of a plain Save.
+const portSettingsChanged = computed(() => osdPortChanged.value || customTextPortChanged.value);
+
+// A port-only change still has to enable Save; the OSD store's dirty state cannot see these.
+const portsOrConfigDirty = computed(() => osdStore.dirty || portSettingsChanged.value);
 import BaseTab from "./BaseTab.vue";
 import WikiButton from "@/components/elements/WikiButton.vue";
 import UiBox from "@/components/elements/UiBox.vue";
@@ -536,27 +693,32 @@ import SettingRow from "@/components/elements/SettingRow.vue";
 import { i18n } from "@/js/localization";
 
 import { FONT, SYM } from "@/js/utils/osdFont";
+import { getVisibleAlarmEntries } from "./osd/osd_alarms";
 import { OSD_CONSTANTS } from "./osd/osd_constants";
-import { positionConfigs, getPresetGridCells } from "./osd/osd_positions";
+import { positionConfigs, getPresetGridCells, type PositionConfig } from "./osd/osd_positions";
 import LogoManager from "@/js/LogoManager";
-import GUI from "@/js/gui";
-import MSP from "@/js/msp";
-import { reinitializeConnection } from "@/js/serial_backend";
 import { gui_log } from "@/js/gui_log";
-import { tracking } from "@/js/Analytics";
+import { getTracking } from "@/js/Analytics";
 import semver from "semver";
-import { API_VERSION_1_45 } from "@/js/data_storage";
+import { API_VERSION_1_48 } from "@/js/data_storage";
+import { useConnectionStore } from "@/stores/connection";
 
 const osdStore = useOsdStore();
 const fcStore = useFlightControllerStore();
+const connectionStore = useConnectionStore();
+const { hasBuildOption } = useBuildOptions();
+
+/** Anything with the name / text a field list sorts and labels by. */
+type LabelledItem = { name: string; text: string; textParams?: OsdTextParams };
+type FontType = (typeof OSD_CONSTANTS.FONT_TYPES)[number];
 
 // Refs for DOM elements
-const previewContainer = ref(null);
-const previewContainerOuter = ref(null);
-const rulerCanvas = ref(null);
-const fontManagerDialog = ref(null);
-const fontPreviewContainer = ref(null);
-const logoPreview = ref(null);
+const previewContainer = ref<HTMLElement | null>(null);
+const previewContainerOuter = ref<HTMLElement | null>(null);
+const rulerCanvas = ref<HTMLCanvasElement | null>(null);
+const fontManagerOpen = ref(false);
+const fontPreviewContainer = ref<HTMLElement | null>(null);
+const logoPreview = ref<HTMLElement | null>(null);
 
 // Local reactive state
 const elementSearchQuery = ref("");
@@ -568,37 +730,46 @@ const activeProfile = ref(0);
 const selectedFontPreset = ref(selectedFont.value);
 const uploadProgress = ref(0);
 const uploadProgressLabel = ref("");
-const isSaving = ref(false);
+const { isSaving, runSave } = useSaving();
+const { reboot } = useReboot();
+const { rebootAfterFontUpload } = useOsdFontUpload();
 const logoImageSizeParams = {
     logoWidthPx: FONT.constants.SIZES.CHAR_WIDTH * 24,
     logoHeightPx: FONT.constants.SIZES.CHAR_HEIGHT * 4,
 };
-const saveButtonTextOverride = ref(null);
-const saveButtonText = computed(() => saveButtonTextOverride.value || i18n.getMessage("osdSetupSave"));
+const { label: saveButtonText, flash: flashSaveButtonText } = useTransientLabel(() =>
+    i18n.getMessage(portSettingsChanged.value ? "osdSetupSaveReboot" : "osdSetupSave"),
+);
 const saveMenuItems = computed(() => [
     [
         {
             label: i18n.getMessage("osdSetupSave"),
             icon: "i-lucide-save",
-            disabled: !osdStore.dirty || isSaving.value,
+            disabled: !portsOrConfigDirty.value || isSaving.value,
             onSelect: saveConfig,
+        },
+        {
+            label: i18n.getMessage("osdSetupSaveReboot"),
+            icon: "i-lucide-rotate-cw",
+            disabled: !portsOrConfigDirty.value || isSaving.value,
+            onSelect: saveAndRebootConfig,
         },
         {
             label: i18n.getMessage("osdSetupRefresh"),
             icon: "i-lucide-refresh-cw",
-            disabled: isSaving.value || (hasLoadedConfig.value && !osdStore.dirty),
+            disabled: isSaving.value || (hasLoadedConfig.value && !portsOrConfigDirty.value),
             onSelect: refreshConfig,
         },
     ],
 ]);
 const hasLoadedConfig = ref(false);
 // State for popover
-const presetMenuField = ref(null);
+const presetMenuField = ref<OsdDisplayItem | null>(null);
 const showPresetSubmenu = ref(false); // Track click state for submenu
 const presetGridCells = getPresetGridCells();
-const OSD_CHAR_WIDTH_FALLBACK = 12;
-const OSD_CHAR_HEIGHT_FALLBACK = 18;
-let dragPreviewElement = null;
+// setDragImage needs an already-loaded image, so this is created up front.
+const transparentDragImage = new Image(1, 1);
+transparentDragImage.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 
 // Preview composable
 const { previewRows, previewBuffer, updatePreviewBuffer, searchLimitsElement } = useOsdPreview();
@@ -608,12 +779,15 @@ const isDraggingGrid = ref(false);
 const effectiveShowRulers = computed(() => showRulers.value);
 
 // Convert alarms object to array for template iteration
+const hideCapacityAlarm = computed(() =>
+    Boolean(
+        fcStore.config?.apiVersion &&
+        semver.gte(fcStore.config.apiVersion, API_VERSION_1_48) &&
+        (fcStore.config.numberOfBatteryProfiles || 0) > 0,
+    ),
+);
 const alarmEntries = computed(() => {
-    const alarmsObj = osdStore.alarms;
-    if (!alarmsObj || typeof alarmsObj !== "object" || Array.isArray(alarmsObj)) {
-        return [];
-    }
-    return Object.entries(alarmsObj).map(([key, alarm]) => ({ key, alarm }));
+    return getVisibleAlarmEntries(osdStore.alarms, hideCapacityAlarm.value);
 });
 useOsdRuler(rulerCanvas, previewContainerOuter, effectiveShowRulers);
 
@@ -624,44 +798,64 @@ const onPreviewMouseDown = () => {
 
 const onPreviewMouseUp = () => {
     isDraggingGrid.value = false;
-    cleanupDragPreviewElement();
+    dragGhostPosition.value = null;
+    dragState.value = { field: null, startIdx: -1, grabX: Number.NaN, grabY: Number.NaN };
 };
 
-// Current drag state
-const dragState = ref({
+// Current drag state. grabX/grabY is the cell the drag started on, kept here because
+// dataTransfer.getData() is unreadable during dragover.
+const dragState = ref<{ field: OsdDisplayItem | null; startIdx: number; grabX: number; grabY: number }>({
     field: null,
     startIdx: -1,
+    grabX: Number.NaN,
+    grabY: Number.NaN,
+});
+
+// Where the dragged field would land if dropped now; null hides the ghost.
+const dragGhostPosition = ref<number | null>(null);
+
+// Grid index -> glyph image for the snapped drop preview, laid out like useOsdPreview draws it.
+const dragGhostImages = computed(() => {
+    const images = new Map<number, string>();
+    const field = dragState.value.field;
+    if (!field || dragGhostPosition.value === null) {
+        return images;
+    }
+
+    const displaySize = osdStore.displaySize;
+    const origin = ((dragGhostPosition.value % displaySize.total) + displaySize.total) % displaySize.total;
+    for (const glyph of getPreviewCells(field.preview)) {
+        if (!Number.isFinite(glyph.charCode)) {
+            continue;
+        }
+        const index = origin + glyph.x + glyph.y * displaySize.x;
+        if (index >= 0 && index < displaySize.total) {
+            images.set(index, FONT.draw(glyph.charCode as number));
+        }
+    }
+    return images;
 });
 
 // Highlighted field for hover effects
-const highlightedField = ref(null);
+const highlightedField = ref<OsdDisplayItem | null>(null);
 
-// Analytics tracking
-const analyticsChanges = ref({});
+// Analytics tracking: change type -> element name -> changed
+const analyticsChanges = ref<Record<string, Record<string, boolean>>>({});
 
 // Constants from OSD module
 const videoTypeOptions = computed(() => {
     const types = ["AUTO", "PAL", "NTSC", "HD"];
-    const labelKeys = {
+    const labelKeys: Record<string, string> = {
         AUTO: "osdSetupVideoFormatOptionAuto",
         PAL: "osdSetupVideoFormatOptionPal",
         NTSC: "osdSetupVideoFormatOptionNtsc",
         HD: "osdSetupVideoFormatOptionHd",
     };
-    const buildOptions = fcStore.config?.buildOptions || [];
-    const apiVersion = fcStore.config?.apiVersion;
-    const hasBuildOptionGating = apiVersion && semver.gte(apiVersion, API_VERSION_1_45) && buildOptions.length > 0;
+    const hasSdOsd = hasBuildOption("USE_OSD_SD");
+    const hasHdOsd = hasBuildOption("USE_OSD_HD");
 
     return types.map((type, value) => {
-        let disabled = false;
-        if (hasBuildOptionGating) {
-            if (type !== "HD" && !buildOptions.includes("USE_OSD_SD")) {
-                disabled = true;
-            }
-            if (type === "HD" && !buildOptions.includes("USE_OSD_HD")) {
-                disabled = true;
-            }
-        }
+        const disabled = type === "HD" ? !hasHdOsd : !hasSdOsd;
 
         return {
             type,
@@ -692,6 +886,20 @@ const timerSources = [
 // Font types from OSD constants
 const fontTypes = computed(() => OSD_CONSTANTS.FONT_TYPES || []);
 
+// FB_OSD (framebuffer OSD) in the PICO implementation has two modes and two font types: pixel / non-pixel, and standard / small font.
+// Typically, non-pixel uses standard fonts for MAX7456 compatibility, and pixel uses a new small font type.
+const isFbOsdSmallFont = computed(() => Boolean(osdStore.state.requiresFbSmallFont));
+
+// Fonts flagged fbOsdSmallFont in FONT_TYPES are meant for FB_OSD small font mode, and the standard
+// fonts for everything else. Selection is left free so any font can be previewed; the upload is guarded.
+function isFontUsable(font: FontType | undefined): boolean {
+    return font !== undefined && Boolean(font.fbOsdSmallFont) === isFbOsdSmallFont.value;
+}
+
+function firstUsableFontIndex() {
+    return fontTypes.value.findIndex(isFontUsable);
+}
+
 // USelect computed items
 const profileOptions = computed(() =>
     Array.from({ length: osdStore.numberOfProfiles }, (_, i) => ({
@@ -700,8 +908,8 @@ const profileOptions = computed(() =>
     })),
 );
 
-function buildFontItems(selectedValue) {
-    const items = [];
+function buildFontItems(selectedValue: number) {
+    const items: { value: number; label: string; disabled?: boolean }[] = [];
     if (selectedValue === -1) {
         items.push({
             value: -1,
@@ -748,11 +956,11 @@ const timerPrecisionItems = computed(() =>
     })),
 );
 
-function getLocalizedFieldText(field) {
+function getLocalizedFieldText(field: LabelledItem): string {
     return i18n.getMessage(field.text, field.textParams) || "";
 }
 
-function compareLocalizedFields(a, b) {
+function compareLocalizedFields(a: LabelledItem, b: LabelledItem): number {
     if (a.name === "UNKNOWN" && b.name !== "UNKNOWN") {
         return 1;
     }
@@ -789,12 +997,12 @@ const sortedStatItems = computed(() => {
 });
 
 // Check if field is highlighted
-function isFieldHighlighted(field) {
+function isFieldHighlighted(field: OsdDisplayItem): boolean {
     return highlightedField.value === field;
 }
 
 // Highlight field on hover
-function highlightField(field) {
+function highlightField(field: OsdDisplayItem) {
     highlightedField.value = field;
     updatePreview();
 }
@@ -806,14 +1014,20 @@ function unhighlightField() {
 }
 
 // Toggle field visibility for a specific profile
-function toggleFieldVisibility(fieldIndex, profileIndex, event) {
-    osdStore.updateDisplayItemVisibility(fieldIndex, profileIndex, event.target.checked);
+function toggleFieldVisibility(fieldIndex: number, profileIndex: number, event: Event) {
+    // Bound to the checkbox's change event.
+    const checkbox = event.target;
+    if (!(checkbox instanceof HTMLInputElement)) {
+        return;
+    }
+    osdStore.updateDisplayItemVisibility(fieldIndex, profileIndex, checkbox.checked);
     trackChange("displayItem", osdStore.displayItems[fieldIndex].name);
     updatePreview();
 }
 
 // Handle variant change
-function onVariantChange(field) {
+function onVariantChange(field: OsdDisplayItem) {
+    osdStore.refreshDisplayItemPreview(field);
     trackChange("variant", field.name);
     updatePreview();
 }
@@ -845,7 +1059,7 @@ function onStatChange() {
 }
 
 // Track analytics changes
-function trackChange(type, name) {
+function trackChange(type: string, name: string) {
     if (!analyticsChanges.value[type]) {
         analyticsChanges.value[type] = {};
     }
@@ -853,11 +1067,12 @@ function trackChange(type, name) {
 }
 
 // Get preview character class
-function getPreviewCellClass(cell) {
-    const classes = {
+function getPreviewCellClass(cell: PreviewCell) {
+    const classes: Record<string, boolean | undefined> = {
         "preview-element": !!cell.field,
         draggable: cell.field?.positionable,
         highlighted: cell.field != null && cell.field === highlightedField.value,
+        "drag-source": cell.field != null && cell.field === dragState.value.field && dragGhostPosition.value !== null,
     };
 
     if (cell.field) {
@@ -867,15 +1082,13 @@ function getPreviewCellClass(cell) {
     return classes;
 }
 
-function cleanupDragPreviewElement() {
-    if (!dragPreviewElement) {
-        return;
-    }
-    dragPreviewElement.remove();
-    dragPreviewElement = null;
+interface PreviewGlyph {
+    x: number;
+    y: number;
+    charCode: number | undefined;
 }
 
-function getPreviewCells(preview) {
+function getPreviewCells(preview: OsdPreview | null | undefined): PreviewGlyph[] {
     if (typeof preview === "string") {
         return Array.from(preview).map((char, index) => ({
             x: index,
@@ -888,8 +1101,8 @@ function getPreviewCells(preview) {
         return [];
     }
 
-    if (preview.length > 0 && typeof preview[0] === "string") {
-        const cells = [];
+    if (isStringArrayPreview(preview)) {
+        const cells: PreviewGlyph[] = [];
         preview.forEach((line, y) => {
             Array.from(line).forEach((char, x) => {
                 cells.push({ x, y, charCode: char.codePointAt(0) });
@@ -903,98 +1116,8 @@ function getPreviewCells(preview) {
         .map((entry) => ({ x: entry.x, y: entry.y, charCode: entry.sym }));
 }
 
-function getRenderedCharSize(dragCellElement) {
-    const imageRect = dragCellElement?.querySelector("img")?.getBoundingClientRect?.();
-    if (imageRect?.width > 0 && imageRect?.height > 0) {
-        return {
-            width: Math.max(1, Math.round(imageRect.width)),
-            height: Math.max(1, Math.round(imageRect.height)),
-        };
-    }
-
-    const cellRect = dragCellElement?.getBoundingClientRect?.();
-    if (cellRect?.width > 0 && cellRect?.height > 0) {
-        return {
-            width: Math.max(1, Math.round(cellRect.width)),
-            height: Math.max(1, Math.round(cellRect.height)),
-        };
-    }
-
-    return { width: OSD_CHAR_WIDTH_FALLBACK, height: OSD_CHAR_HEIGHT_FALLBACK };
-}
-
-function createFieldDragPreviewElement(displayItem, charWidth, charHeight) {
-    const cells = getPreviewCells(displayItem.preview).filter((cell) => Number.isFinite(cell.charCode));
-    if (cells.length === 0) {
-        return null;
-    }
-
-    let minX = cells[0].x;
-    let maxX = cells[0].x;
-    let minY = cells[0].y;
-    let maxY = cells[0].y;
-
-    for (const cell of cells) {
-        minX = Math.min(minX, cell.x);
-        maxX = Math.max(maxX, cell.x);
-        minY = Math.min(minY, cell.y);
-        maxY = Math.max(maxY, cell.y);
-    }
-
-    const widthCells = maxX - minX + 1;
-    const heightCells = maxY - minY + 1;
-    const container = document.createElement("div");
-    container.style.position = "fixed";
-    container.style.left = "-9999px";
-    container.style.top = "-9999px";
-    container.style.pointerEvents = "none";
-    container.style.width = `${widthCells * charWidth}px`;
-    container.style.height = `${heightCells * charHeight}px`;
-    container.style.zIndex = "2147483647";
-    container.style.imageRendering = "pixelated";
-
-    for (const cell of cells) {
-        const img = document.createElement("img");
-        img.src = FONT.draw(cell.charCode);
-        img.alt = "";
-        img.draggable = false;
-        img.style.position = "absolute";
-        img.style.left = `${(cell.x - minX) * charWidth}px`;
-        img.style.top = `${(cell.y - minY) * charHeight}px`;
-        img.style.width = `${charWidth}px`;
-        img.style.height = `${charHeight}px`;
-        img.style.imageRendering = "pixelated";
-        img.style.opacity = "1";
-        container.appendChild(img);
-    }
-
-    return {
-        element: container,
-        minX,
-        minY,
-        widthPx: widthCells * charWidth,
-        heightPx: heightCells * charHeight,
-    };
-}
-
-function getDragPreviewAnchor(displayItem, dragX, dragY, displaySize, dragPreviewMeta, charWidth, charHeight) {
-    const normalizedPosition = ((displayItem.position % displaySize.total) + displaySize.total) % displaySize.total;
-    const originX = normalizedPosition % displaySize.x;
-    const originY = Math.trunc(normalizedPosition / displaySize.x);
-    const localX = dragX - originX;
-    const localY = dragY - originY;
-
-    const anchorX = (localX - dragPreviewMeta.minX) * charWidth + charWidth / 2;
-    const anchorY = (localY - dragPreviewMeta.minY) * charHeight + charHeight / 2;
-
-    return {
-        x: Math.min(Math.max(anchorX, 0), dragPreviewMeta.widthPx),
-        y: Math.min(Math.max(anchorY, 0), dragPreviewMeta.heightPx),
-    };
-}
-
 // Drag and drop handlers
-function onDragStart(event, cell) {
+function onDragStart(event: DragEvent, cell: PreviewCell) {
     const field = cell.field;
     if (!field?.positionable) {
         return;
@@ -1005,138 +1128,102 @@ function onDragStart(event, cell) {
         return;
     }
 
-    const xPos = Number.parseInt(event.currentTarget.dataset.x);
-    const yPos = Number.parseInt(event.currentTarget.dataset.y);
-    const charSize = getRenderedCharSize(event.currentTarget);
-    let offsetX = charSize.width / 2;
-    let offsetY = charSize.height / 2;
-
-    // For non-array previews, adjust offset to center on character
-    if (!Array.isArray(displayItem.preview)) {
-        offsetX += xPos * charSize.width;
-        offsetY += yPos * charSize.height;
+    // Bound on the preview cell div; a dragstart always carries a dataTransfer.
+    const cellElement = event.currentTarget;
+    const dataTransfer = event.dataTransfer;
+    if (!(cellElement instanceof HTMLElement) || !dataTransfer) {
+        return;
     }
 
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", String(field.index));
-    event.dataTransfer.setData("x", String(event.currentTarget.dataset.x));
-    event.dataTransfer.setData("y", String(event.currentTarget.dataset.y));
+    dataTransfer.effectAllowed = "move";
+    dataTransfer.setData("text/plain", String(field.index));
 
-    // Set drag image if available and not on Linux
+    // The snapped ghost on the grid stands in for the browser's drag image. Linux keeps the
+    // native image: WebKitGTK does not honour a custom one reliably.
     if (!navigator.platform.includes("Linux")) {
-        cleanupDragPreviewElement();
-        const dragPreviewMeta = createFieldDragPreviewElement(displayItem, charSize.width, charSize.height);
-        if (dragPreviewMeta) {
-            dragPreviewElement = dragPreviewMeta.element;
-            document.body.appendChild(dragPreviewElement);
-
-            const anchor = getDragPreviewAnchor(
-                displayItem,
-                xPos,
-                yPos,
-                osdStore.displaySize,
-                dragPreviewMeta,
-                charSize.width,
-                charSize.height,
-            );
-            event.dataTransfer.setDragImage(dragPreviewElement, anchor.x, anchor.y);
-        } else if (field.preview_img) {
-            event.dataTransfer.setDragImage(field.preview_img, offsetX, offsetY);
-        }
+        dataTransfer.setDragImage(transparentDragImage, 0, 0);
     }
 
-    dragState.value.field = field;
-    dragState.value.startIdx = field.position;
+    dragState.value = {
+        field,
+        startIdx: field.position,
+        grabX: Number.parseInt(cellElement.dataset.x ?? "", 10),
+        grabY: Number.parseInt(cellElement.dataset.y ?? "", 10),
+    };
     isDraggingGrid.value = true;
 }
 
-function onDragOverCell(event) {
-    event.dataTransfer.dropEffect = "move";
-    event.currentTarget.style.background = "rgba(0,0,0,.5)";
-}
+/**
+ * Where the dragged field lands when dropped on the cell at cellPosition: moved by the offset
+ * from the grabbed cell, then clamped to the screen. Null when no valid position exists.
+ */
+function resolveDropPosition(displayItem: OsdDisplayItem, cellPosition: number, startIdx: number): number | null {
+    const displaySize = osdStore.displaySize;
+    const cursorX = cellPosition % displaySize.x;
+    const cursorY = Math.trunc(cellPosition / displaySize.x);
+    const { grabX, grabY } = dragState.value;
 
-function onDragLeaveCell(event) {
-    event.currentTarget.removeAttribute("style");
-}
+    // Without a grab cell (a drag from outside the preview) the field's origin goes under the cursor.
+    let position = cellPosition;
+    if (!Number.isNaN(grabX) && !Number.isNaN(grabY)) {
+        position = startIdx + cellPosition - (grabX + grabY * displaySize.x);
+    }
 
-function isStringArrayPreview(preview) {
-    return Array.isArray(preview) && typeof preview[0] === "string";
-}
-
-function applyDragOffsetFromStartCell(position, event, displaySize, startIdx) {
-    const x = Number.parseInt(event.dataTransfer.getData("x"), 10);
-    const y = Number.parseInt(event.dataTransfer.getData("y"), 10);
-    if (Number.isNaN(x) || Number.isNaN(y)) {
+    if (displayItem.ignoreSize) {
         return position;
     }
-
-    const draggedCellIdx = x + y * displaySize.x;
-    const offsetIdx = position - draggedCellIdx;
-    return startIdx + offsetIdx;
+    if (Array.isArray(displayItem.preview)) {
+        return clampArrayPreviewPosition(displayItem, position, displaySize, cursorX);
+    }
+    return clampStringPreviewPosition(displayItem, position, displaySize, cursorY);
 }
 
-function clampStringPreviewPosition(displayItem, position, displaySize, cursorY) {
-    const elementWidth = Array.from(displayItem.preview || "").length;
-    const maxX = Math.max(0, displaySize.x - elementWidth);
-    const maxY = Math.max(0, displaySize.y - 1);
-    const row = Math.min(Math.max(cursorY, 0), maxY);
+function onDragOverCell(event: DragEvent) {
+    if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "move";
+    }
 
-    const rawX = position - row * displaySize.x;
-    const x = Math.min(Math.max(rawX, 0), maxX);
-
-    return row * displaySize.x + x;
+    const field = dragState.value.field;
+    const cellElement = event.currentTarget;
+    if (!field || !(cellElement instanceof HTMLElement)) {
+        return;
+    }
+    const cellPosition = Number.parseInt(cellElement.dataset.position ?? "", 10);
+    dragGhostPosition.value = resolveDropPosition(field, cellPosition, dragState.value.startIdx);
 }
 
-function clampStringArrayPreviewPosition(position, displaySize, cursorX, limits) {
-    const selectedPositionX = position % displaySize.x;
-    let selectedPositionY = Math.trunc(position / displaySize.x);
-
-    if (position < 0) {
-        return null;
+function onPreviewDragLeave(event: DragEvent) {
+    // dragleave also fires moving between cells; only hide the ghost once the pointer leaves the grid.
+    const container = previewContainer.value;
+    if (!container) {
+        return;
     }
-    if (selectedPositionX > cursorX) {
-        position += displaySize.x - selectedPositionX;
-        selectedPositionY++;
-    } else if (selectedPositionX + limits.maxX > displaySize.x) {
-        position -= selectedPositionX + limits.maxX - displaySize.x;
+    const next = event.relatedTarget;
+    if (next instanceof Node) {
+        if (container.contains(next)) {
+            return;
+        }
+    } else {
+        // Some engines leave relatedTarget null on dragleave, so fall back to the pointer position.
+        const rect = container.getBoundingClientRect();
+        const inside =
+            event.clientX >= rect.left &&
+            event.clientX < rect.right &&
+            event.clientY >= rect.top &&
+            event.clientY < rect.bottom;
+        if (inside) {
+            return;
+        }
     }
-    if (selectedPositionY < 0) {
-        position += Math.abs(selectedPositionY) * displaySize.x;
-    } else if (selectedPositionY + limits.maxY > displaySize.y) {
-        position -= (selectedPositionY + limits.maxY - displaySize.y) * displaySize.x;
-    }
-
-    return position;
+    dragGhostPosition.value = null;
 }
 
-function clampObjectArrayPreviewPosition(position, displaySize, limits) {
-    const selectedPositionX = ((position % displaySize.x) + displaySize.x) % displaySize.x;
-    const selectedPositionY = Math.floor(position / displaySize.x);
-
-    if (limits.minX < 0 && selectedPositionX + limits.minX < 0) {
-        position += Math.abs(selectedPositionX + limits.minX);
-    } else if (limits.maxX > 0 && selectedPositionX + limits.maxX >= displaySize.x) {
-        position -= selectedPositionX + limits.maxX + 1 - displaySize.x;
+function onDropCell(event: DragEvent) {
+    // Bound on the preview cell div; a drop always carries a dataTransfer.
+    const cellElement = event.currentTarget;
+    if (!(cellElement instanceof HTMLElement) || !event.dataTransfer) {
+        return;
     }
-    if (limits.minY < 0 && selectedPositionY + limits.minY < 0) {
-        position += Math.abs(selectedPositionY + limits.minY) * displaySize.x;
-    } else if (limits.maxY > 0 && selectedPositionY + limits.maxY >= displaySize.y) {
-        position -= (selectedPositionY + limits.maxY - displaySize.y + 1) * displaySize.x;
-    }
-
-    return Math.max(0, position);
-}
-
-function clampArrayPreviewPosition(displayItem, position, displaySize, cursorX) {
-    const limits = searchLimitsElement(displayItem.preview);
-    if (isStringArrayPreview(displayItem.preview)) {
-        return clampStringArrayPreviewPosition(position, displaySize, cursorX, limits);
-    }
-    return clampObjectArrayPreviewPosition(position, displaySize, limits);
-}
-
-function onDropCell(event) {
-    event.currentTarget.removeAttribute("style");
 
     const fieldId = Number.parseInt(event.dataTransfer.getData("text/plain"));
     const displayItem = osdStore.displayItems[fieldId];
@@ -1144,52 +1231,42 @@ function onDropCell(event) {
         return;
     }
 
-    const displaySize = osdStore.displaySize;
-    let position = Number.parseInt(event.currentTarget.dataset.position);
-    const cursorX = position % displaySize.x;
-    const cursorY = Math.trunc(position / displaySize.x);
-
     const startIdx =
         dragState.value.field?.index === fieldId && dragState.value.startIdx >= 0
             ? dragState.value.startIdx
             : displayItem.position;
-    position = applyDragOffsetFromStartCell(position, event, displaySize, startIdx);
+    const position = resolveDropPosition(
+        displayItem,
+        Number.parseInt(cellElement.dataset.position ?? "", 10),
+        startIdx,
+    );
 
-    if (!displayItem.ignoreSize) {
-        if (Array.isArray(displayItem.preview)) {
-            position = clampArrayPreviewPosition(displayItem, position, displaySize, cursorX);
-            if (position === null) {
-                return;
-            }
-        } else {
-            position = clampStringPreviewPosition(displayItem, position, displaySize, cursorY);
-        }
+    dragState.value = { field: null, startIdx: -1, grabX: Number.NaN, grabY: Number.NaN };
+    dragGhostPosition.value = null;
+    if (position === null) {
+        return;
     }
 
-    // Update display item position
     displayItem.position = position;
     trackChange("position", displayItem.name);
     updatePreview();
-
-    dragState.value.field = null;
-    dragState.value.startIdx = -1;
 }
 
 // Mouse hover cross-highlighting
-function onCellMouseEnter(cell) {
+function onCellMouseEnter(cell: PreviewCell) {
     if (cell.field) {
         highlightedField.value = cell.field;
     }
 }
 
-function onCellMouseLeave(cell) {
+function onCellMouseLeave(cell: PreviewCell) {
     if (highlightedField.value === cell.field) {
         highlightedField.value = null;
     }
 }
 
 // Preset position system
-function openPresetMenu(field, event) {
+function openPresetMenu(field: OsdDisplayItem, event: Event) {
     event.stopPropagation();
     // Reset submenu state when opening main menu
     showPresetSubmenu.value = false;
@@ -1200,7 +1277,7 @@ function closePresetMenu() {
     presetMenuField.value = null;
 }
 
-function applyPresetPosition(field, positionKey) {
+function applyPresetPosition(field: OsdDisplayItem, positionKey: string | null) {
     if (!positionKey) {
         return;
     }
@@ -1268,7 +1345,30 @@ function applyPresetPosition(field, positionKey) {
     closePresetMenu();
 }
 
-function isCandidateWithinBounds(testX, testY, elementWidth, elementHeight, displaySize) {
+interface PlacementCandidate {
+    testX: number;
+    testY: number;
+    elementWidth: number;
+    elementHeight: number;
+    displaySize: OsdDisplaySize;
+    previewBufferData: PreviewCell[];
+    field: OsdDisplayItem;
+}
+
+interface PlacementSearch extends Omit<PlacementCandidate, "testX" | "testY"> {
+    target: ReturnType<PositionConfig["coords"]>;
+    grow: PositionConfig["grow"];
+    adjustOffsetX?: number;
+    adjustOffsetY?: number;
+}
+
+function isCandidateWithinBounds(
+    testX: number,
+    testY: number,
+    elementWidth: number,
+    elementHeight: number,
+    displaySize: OsdDisplaySize,
+): boolean {
     return (
         testX >= 1 &&
         testX + elementWidth <= displaySize.x - 1 &&
@@ -1277,7 +1377,15 @@ function isCandidateWithinBounds(testX, testY, elementWidth, elementHeight, disp
     );
 }
 
-function canPlaceAtCandidate({ testX, testY, elementWidth, elementHeight, displaySize, previewBufferData, field }) {
+function canPlaceAtCandidate({
+    testX,
+    testY,
+    elementWidth,
+    elementHeight,
+    displaySize,
+    previewBufferData,
+    field,
+}: PlacementCandidate): boolean {
     for (let row = 0; row < elementHeight; row++) {
         for (let col = 0; col < elementWidth; col++) {
             const checkPos = (testY + row) * displaySize.x + testX + col;
@@ -1305,7 +1413,7 @@ function findAvailablePosition({
     field,
     adjustOffsetX = 0,
     adjustOffsetY = 0,
-}) {
+}: PlacementSearch): number | null {
     for (let offset = 0; offset < Math.max(displaySize.x, displaySize.y); offset++) {
         const testX = target.x + grow.x * offset;
         const testY = target.y + grow.y * offset;
@@ -1342,31 +1450,36 @@ function updatePreview() {
 
 // Load OSD configuration from FC
 async function loadConfig() {
-    try {
-        // Fetch OSD config via Store
-        await osdStore.fetchOsdConfig();
+    await runTabLoad(
+        async () => {
+            // Fetch OSD config via Store
+            await osdStore.fetchOsdConfig();
 
-        // Set initial profile from store state
-        previewProfile.value = osdStore.osdProfiles.selected || 0;
-        activeProfile.value = osdStore.osdProfiles.selected || 0;
+            await loadOsdPort();
+            await loadCustomTextPort();
 
-        // Sync font state from memory
-        if (FONT.data?.loaded_font_file) {
-            const loadedIndex = fontTypes.value.findIndex((f) => f.file === FONT.data.loaded_font_file);
-            if (loadedIndex !== -1 && loadedIndex !== selectedFont.value) {
-                selectedFont.value = loadedIndex;
-                selectedFontPreset.value = loadedIndex;
-            } else if (loadedIndex === -1 && selectedFont.value !== -1) {
-                selectedFont.value = -1;
-                selectedFontPreset.value = -1;
+            // Set initial profile from store state
+            previewProfile.value = osdStore.osdProfiles.selected || 0;
+            activeProfile.value = osdStore.osdProfiles.selected || 0;
+
+            // Sync font state from memory
+            const loadedFontFile = FONT.data?.loaded_font_file;
+            if (loadedFontFile) {
+                const loadedIndex = fontTypes.value.findIndex((f) => f.file === loadedFontFile);
+                if (loadedIndex !== -1 && loadedIndex !== selectedFont.value) {
+                    selectedFont.value = loadedIndex;
+                    selectedFontPreset.value = loadedIndex;
+                } else if (loadedIndex === -1 && selectedFont.value !== -1) {
+                    selectedFont.value = -1;
+                    selectedFontPreset.value = -1;
+                }
             }
-        }
 
-        updatePreview();
-        hasLoadedConfig.value = true;
-    } catch (error) {
-        console.error("Failed to load OSD configuration:", error);
-    }
+            updatePreview();
+            hasLoadedConfig.value = true;
+        },
+        (error) => console.error("Failed to load OSD configuration:", error),
+    );
 }
 
 async function refreshConfig() {
@@ -1378,39 +1491,44 @@ async function refreshConfig() {
 }
 
 // Save OSD configuration to FC
-async function saveConfig() {
-    if (isSaving.value) {
-        return;
-    }
-    isSaving.value = true;
+const saveConfig = () =>
+    runSave(async () => {
+        // Warn before a pick that would take a port from another feature; a cancel here leaves the
+        // save untouched, before anything has been written to the FC.
+        if (!(await confirmPortConflicts())) {
+            return;
+        }
 
-    try {
         // Sync store state to the shared OSD.data bridge used by legacy helpers.
         osdStore.syncToLegacy();
 
         // Send all OSD config to FC and write EEPROM.
-        await osdStore.saveAllConfig();
+        await osdStore.saveAllConfig(async () => {
+            await writeOsdPort();
+            await writeCustomTextPort();
+        });
 
         // Track analytics
         const changes = analyticsChanges.value;
         if (Object.keys(changes).length > 0) {
-            tracking.sendSaveAndChangeEvents(tracking.EVENT_CATEGORIES.FLIGHT_CONTROLLER, changes, "osd");
+            const tracking = getTracking();
+            tracking?.sendSaveAndChangeEvents(tracking.EVENT_CATEGORIES.FLIGHT_CONTROLLER, changes, "osd");
             analyticsChanges.value = {};
         }
 
         // Show success
         gui_log(i18n.getMessage("osdSettingsSaved"));
-        saveButtonTextOverride.value = i18n.getMessage("osdButtonSaved");
-        setTimeout(() => {
-            saveButtonTextOverride.value = null;
-        }, 2000);
-    } catch (error) {
-        console.error("Failed to save OSD configuration:", error);
-        gui_log(i18n.getMessage("error", { errorMessage: "Failed to save OSD configuration" }));
-    } finally {
-        isSaving.value = false;
-    }
-}
+        flashSaveButtonText(i18n.getMessage("osdButtonSaved"), 2000);
+    });
+
+// A UART assignment only takes effect at serial init, so the port rows need a reboot to bite.
+const saveAndRebootConfig = async () => {
+    await saveConfig();
+    await reboot();
+};
+
+// The primary button does what its label says: with a port change pending it saves and reboots.
+const savePrimaryAction = () => (portSettingsChanged.value ? saveAndRebootConfig() : saveConfig());
 
 // Font Manager
 const fontCharacterUrls = computed(() => {
@@ -1428,8 +1546,14 @@ const fontCharacterUrls = computed(() => {
 const fontDataVersion = ref(0);
 let lastFontPresetRequestId = 0;
 
+// Track when the most recently requested preset has finished loading (or failed).
+let fontPresetLoad = Promise.resolve();
+
+// FONT.data is not reactive; re-evaluate whenever a font is (re)loaded.
+const isSmallFontLoaded = computed(() => fontDataVersion.value >= 0 && FONT.isSmallFont());
+
 function closeFontManager() {
-    fontManagerDialog.value?.close();
+    fontManagerOpen.value = false;
 }
 
 function loadCustomFontFile() {
@@ -1453,50 +1577,66 @@ async function openFontManager() {
     FONT.initData();
 
     // Show the dialog first so DOM elements are available for LogoManager
-    fontManagerDialog.value?.showModal?.();
+    fontManagerOpen.value = true;
     await nextTick();
 
     // Initialize LogoManager (caches DOM elements via querySelector)
     LogoManager.init(FONT, SYM.LOGO);
 
-    // Load selected/default preset on first open if no font is loaded yet.
-    if (!FONT.data.character_image_urls.length && fontTypes.value.length > 0) {
-        const presetToLoad = Math.max(0, selectedFontPreset.value);
+    // Load a preset if nothing is loaded yet, or if the selected preset is not usable with this OSD
+    const fontLoaded = FONT.requireData().character_image_urls.length > 0;
+
+    if (fontTypes.value.length === 0 || (fontLoaded && selectedFontPreset.value === -1)) {
+        // No presets available or keeping user supplied font file
+        refreshFontManagerPreviews();
+        return;
+    }
+
+    let presetToLoad = Math.max(0, selectedFontPreset.value);
+    if (!isFontUsable(fontTypes.value[presetToLoad])) {
+        presetToLoad = Math.max(0, firstUsableFontIndex());
+    }
+
+    if (!fontLoaded || presetToLoad !== selectedFontPreset.value) {
         selectedFontPreset.value = presetToLoad;
         loadFontPreset(presetToLoad);
     } else {
-        // Keep dialog previews in sync when font data was loaded earlier (e.g. during tab init).
-        LogoManager.drawPreview();
-        fontDataVersion.value++;
+        refreshFontManagerPreviews();
     }
 }
 
-function loadFontPreset(index) {
+// Keep dialog previews in sync with font data loaded earlier (e.g. during tab init).
+function refreshFontManagerPreviews() {
+    LogoManager.drawPreview();
+    fontDataVersion.value++;
+}
+
+function loadFontPreset(index: number) {
     const font = fontTypes.value[index];
     if (!font) {
         return;
     }
 
     const fontVer = 2;
+    const requestId = ++lastFontPresetRequestId;
 
     // If this font is already loaded in memory, just trigger reactivity
     if (FONT.data?.loaded_font_file === font.file && FONT.data?.characters?.length > 0) {
+        fontPresetLoad = Promise.resolve();
         fontDataVersion.value++;
         LogoManager.drawPreview();
         updatePreviewBuffer();
         return;
     }
 
-    const requestId = ++lastFontPresetRequestId;
-
-    fetch(`./resources/osd/${fontVer}/${font.file}.mcm`)
+    fontPresetLoad = fetch(`./resources/osd/${fontVer}/${font.file}.mcm`)
         .then((res) => res.text())
         .then((data) => {
             if (requestId !== lastFontPresetRequestId) {
                 return;
             }
             FONT.parseMCMFontFile(data);
-            FONT.data.loaded_font_file = font.file;
+            FONT.requireData().loaded_font_file = font.file;
             fontDataVersion.value++;
             LogoManager.drawPreview();
             // Re-render preview with new font character images
@@ -1519,14 +1659,14 @@ function applyLegacyMobilePreviewZoom() {
 }
 
 function replaceLogoImage() {
-    if (GUI.connect_lock) {
+    if (connectionStore.connectLock) {
         return;
     }
 
     LogoManager.openImage()
         .then((ctx) => {
             LogoManager.replaceLogoInFont(ctx);
-            FONT.data.loaded_font_file = "custom";
+            FONT.requireData().loaded_font_file = "custom";
             lastFontPresetRequestId++;
             LogoManager.drawPreview();
             LogoManager.showUploadHint();
@@ -1538,18 +1678,36 @@ function replaceLogoImage() {
         .catch((error) => console.error(error));
 }
 
+function confirmFontUpload() {
+    const warningKey = isFbOsdSmallFont.value
+        ? "osdSetupUploadFontWarningNeedSmallFont"
+        : "osdSetupUploadFontWarningNeedStandardFont";
+    return globalThis.confirm(i18n.getMessage(warningKey));
+}
+
 async function flashFont() {
-    if (GUI.connect_lock) {
+    if (connectionStore.connectLock) {
         return;
     }
 
-    GUI.connect_lock = true;
+    connectionStore.connectLock = true;
+
+    // Wait for any background load (avoid uploading a partially replaced font).
+    // Give up if the selected preset is still not the loaded font.
+    await fontPresetLoad;
+    const presetFont = fontTypes.value[selectedFontPreset.value];
+    if (presetFont && FONT.data?.loaded_font_file !== presetFont.file) {
+        console.error(`Font preset ${presetFont.file} is not loaded, cannot upload`);
+        uploadProgressLabel.value = i18n.getMessage("osdSetupUploadingFontFailed");
+        connectionStore.connectLock = false;
+        return;
+    }
 
     // If "User supplied font" is selected but no custom font file has been loaded yet,
     // prompt the user to pick a file before proceeding to upload.
     if (
         selectedFontPreset.value === -1 &&
-        (!FONT.data.loaded_font_file || fontTypes.value.some((f) => f.file === FONT.data.loaded_font_file))
+        (!FONT.data?.loaded_font_file || fontTypes.value.some((f) => f.file === FONT.data?.loaded_font_file))
     ) {
         try {
             await FONT.openFontFile();
@@ -1558,8 +1716,16 @@ async function flashFont() {
             updatePreviewBuffer();
         } catch (err) {
             console.error("User cancelled custom font selection or error occurred", err);
-            GUI.connect_lock = false;
+            connectionStore.connectLock = false;
             return; // Cancel the upload process
+        }
+    }
+
+    // Warn before uploading a font (built-in or user supplied) that does not match the OSD's font mode.
+    if (FONT.isSmallFont() !== isFbOsdSmallFont.value) {
+        if (!confirmFontUpload()) {
+            connectionStore.connectLock = false;
+            return;
         }
     }
 
@@ -1567,8 +1733,8 @@ async function flashFont() {
     uploadProgressLabel.value = i18n.getMessage("osdSetupUploadingFont");
 
     // Create a shim that mimics jQuery's $progress.val() for FONT.upload
-    const progressShim = {
-        val(v) {
+    const progressShim: { val(v?: number): unknown } = {
+        val(v?: number) {
             if (v !== undefined) {
                 uploadProgress.value = v;
                 return progressShim;
@@ -1581,23 +1747,17 @@ async function flashFont() {
         await FONT.upload(progressShim);
         uploadProgress.value = 100;
         uploadProgressLabel.value = i18n.getMessage("osdSetupUploadingFontEnd", {
-            length: FONT.data.characters.length,
+            length: FONT.requireData().characters.length,
         });
         // Close the dialog before rebooting so the user isn't left with
         // a stale modal over a disconnected UI.
         closeFontManager();
-        // Reset MSP parser state and flush pending callbacks to prevent
-        // CRC errors from residual serial data before the reboot command.
-        MSP.disconnect_cleanup();
-        // Reboot FC to apply the new font — reinitializeConnection sends
-        // MSP_SET_REBOOT (fire-and-forget) and sets rebootTimestamp so the
-        // serial backend auto-reconnects after the device comes back.
-        reinitializeConnection();
+        rebootAfterFontUpload();
     } catch (err) {
         console.error("Font upload failed:", err);
         uploadProgressLabel.value = i18n.getMessage("osdSetupUploadingFontFailed");
     } finally {
-        GUI.connect_lock = false;
+        connectionStore.connectLock = false;
     }
 }
 
@@ -1643,13 +1803,11 @@ onMounted(async () => {
         LogoManager.init(FONT, SYM.LOGO);
     }
     applyLegacyMobilePreviewZoom();
-    GUI.content_ready();
 });
 
 onUnmounted(() => {
     document.removeEventListener("click", handleClickOutside);
     analyticsChanges.value = {};
-    cleanupDragPreviewElement();
 });
 </script>
 
@@ -1660,10 +1818,11 @@ onUnmounted(() => {
     background-size: cover;
     background-repeat: no-repeat;
     margin-top: 20px;
-    margin-left: 20px;
+    margin-inline-start: 20px;
 }
 
 .tab-osd-char {
+    position: relative;
     display: flex;
     padding: 0;
     margin: 0;
@@ -1689,12 +1848,28 @@ onUnmounted(() => {
     background: rgba(255, 255, 255, 0.4);
 }
 
+/* The field being dragged fades in place while its ghost shows where it will land */
+.tab-osd-char.drag-source img:not(.tab-osd-drag-ghost) {
+    opacity: 0.3;
+}
+
+.tab-osd-char img.tab-osd-drag-ghost {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    background: rgba(255, 255, 255, 0.3);
+    opacity: 0.6;
+    pointer-events: none;
+}
+
 /* Crosshair and grid lines on mouse-down */
 .tab-osd-preview-parent:active::before {
     content: "";
     position: absolute;
     top: 50%;
-    left: 40%;
+    inset-inline-start: 40%;
     border-top: 0.3em dashed var(--gimbalCrosshair);
     width: 20%;
     transform: translateY(-50%);
@@ -1705,7 +1880,7 @@ onUnmounted(() => {
     content: "";
     position: absolute;
     top: 50%;
-    left: 40%;
+    inset-inline-start: 40%;
     border-top: 0.3em dashed var(--gimbalCrosshair);
     width: 20%;
     transform: translateY(-50%) rotate(90deg);
@@ -1724,20 +1899,20 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     justify-content: center;
-    background-color: var(--surface-500, #999);
-    color: var(--text, #fff);
-    border: 1px solid var(--primary-800, #666);
+    background-color: var(--surface-500);
+    color: var(--text);
+    border: 1px solid var(--primary-800);
     transition:
         background-color 0.25s,
         transform 0.25s;
     border-radius: 2px;
     font-size: 10px;
     line-height: 0;
-    margin-left: 4px;
+    margin-inline-start: 4px;
 }
 
 .tab-osd-preset-btn:hover {
-    background-color: var(--surface-700, #666);
+    background-color: var(--surface-700);
     transform: scale(1.1);
 }
 
@@ -1751,8 +1926,8 @@ onUnmounted(() => {
     display: inline-block;
     min-width: 140px;
     top: -5px;
-    left: 100%;
-    margin-left: 5px;
+    inset-inline-start: 100%;
+    margin-inline-start: 5px;
     padding: 2px;
     background-color: var(--surface-50);
     border: 1px solid var(--surface-500);
@@ -1783,14 +1958,14 @@ onUnmounted(() => {
 
 .tab-osd-context-menu-display:hover {
     background-color: var(--surface-700);
-    color: #fff;
+    color: white;
 }
 
 .tab-osd-context-menu-content {
     position: absolute;
-    left: 100%;
+    inset-inline-start: 100%;
     top: -5px;
-    margin-left: 5px;
+    margin-inline-start: 5px;
     display: none;
     opacity: 0;
     z-index: 10002;
@@ -1851,55 +2026,18 @@ onUnmounted(() => {
     opacity: 0.8;
 }
 
-/* Upload progress bar */
-.tab-osd-upload-progress {
-    display: grid;
-    grid-template-areas: "area";
-    width: 100%;
-}
-
-.tab-osd-progress-bar {
-    grid-area: area;
-    width: 100%;
-    height: 26px;
-    border-radius: 5px;
-    border: 1px solid var(--surface-500);
-    appearance: none;
-}
-
-.tab-osd-progress-bar::-webkit-progress-bar {
-    background-color: var(--text);
-    border-radius: 4px;
-    box-shadow: inset 0 0 5px #2f2f2f;
-}
-
-.tab-osd-progress-bar::-webkit-progress-value {
-    background-color: #f86008;
-    border-radius: 4px;
-}
-
-.tab-osd-progress-label {
-    grid-area: area;
-    width: 100%;
-    height: 26px;
-    line-height: 26px;
-    text-align: center;
-    color: white;
-    font-weight: bold;
-}
-
 /* Logo info list (validation markers) */
 .tab-osd-logo-info-list li::before {
     content: "\2022\20";
 }
 .tab-osd-logo-info-list li.valid {
-    color: #00a011;
+    color: var(--success-700);
 }
 .tab-osd-logo-info-list li.valid::before {
     content: "\2714\20";
 }
 .tab-osd-logo-info-list li.invalid {
-    color: #a01100;
+    color: var(--error-600);
 }
 .tab-osd-logo-info-list li.invalid::before {
     content: "\2715\20";

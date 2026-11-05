@@ -1,5 +1,5 @@
 <template>
-    <UiBox :title="$t('autotuneGainTitle')">
+    <UiBox :title="$t('autotuneGainTitle')" type="neutral" collapsible>
         <div v-if="visibleAxisList.length" class="overflow-x-auto mb-3">
             <table class="autotune-table w-full">
                 <!-- Axis group headers -->
@@ -45,9 +45,9 @@
                                 :class="changeClass(row.axes[axis.key]?.changePct)"
                             >
                                 <template v-if="row.axes[axis.key]">
-                                    {{ row.axes[axis.key].value }}
-                                    <span v-if="row.axes[axis.key].changePct != null" class="text-[10px] opacity-80">
-                                        ({{ formatChangePct(row.axes[axis.key].changePct) }})
+                                    {{ row.axes[axis.key]?.value }}
+                                    <span v-if="row.axes[axis.key]?.changePct != null" class="text-[10px] opacity-80">
+                                        ({{ formatChangePct(row.axes[axis.key]?.changePct) }})
                                     </span>
                                 </template>
                                 <template v-else>--</template>
@@ -58,72 +58,266 @@
             </table>
         </div>
 
-        <!-- Axis selector + Apply Button -->
+        <!-- Tuning target + Axis selector + Apply Button -->
         <div class="flex flex-wrap items-center gap-4">
+            <label class="flex items-center gap-2 text-sm">
+                <span class="text-dimmed">{{ $t("autotuneTargetMargin") }}</span>
+                <USelect v-model="targetPhaseMargin" :items="marginOptions" size="xs" class="min-w-40" />
+            </label>
             <label v-if="visibleAxisList.length > 1" class="flex items-center gap-2 text-sm">
                 <span class="text-dimmed">{{ $t("autotuneApplyFromAxis") }}</span>
-                <select
-                    v-model="selectedAxisKey"
-                    class="bg-transparent border border-[var(--surface-300)] rounded px-2 py-1"
-                >
-                    <option v-for="axis in visibleAxisList" :key="axis.key" :value="axis.key">
-                        {{ $t(axis.labelKey) }}
-                    </option>
-                </select>
+                <USelect v-model="selectedAxisKey" :items="axisOptions" size="xs" class="min-w-28" />
             </label>
-            <UButton @click="onApply" size="sm" :disabled="!isConnected || !selectedAxisKey || applying">
+            <UButton @click="onApply" size="xs" :disabled="!isConnected || !selectedAxisKey || applying">
                 {{ $t("autotuneApplyGains") }}
             </UButton>
             <span v-if="!isConnected" class="text-sm text-dimmed" v-html="$t('autotuneConnectRequired')"></span>
             <span v-if="applied" class="text-sm text-green-500 font-bold" v-html="$t('autotuneApplied')"></span>
             <span v-if="applyError" class="text-sm text-red-500 font-bold">{{ applyError }}</span>
         </div>
+
+        <!-- Notes on any axis where the recommendation is not simply the margin
+             target met in full: the craft's phase peak caps the reachable
+             margin, the per-pass clamp cuts the change short, or robustness
+             rather than margin set the gain. -->
+        <p v-for="note in recommendationNotes" :key="note.key" class="text-sm text-dimmed">{{ note.text }}</p>
     </UiBox>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useAutotuneStore } from "@/stores/autotune";
 import { useConnectionStore } from "@/stores/connection";
-import { useAutotune } from "@/composables/useAutotune";
+import { useAutotune, type AnalysisResult, type AxisName, type AxisResult } from "@/composables/useAutotune";
+import { useDialog } from "@/composables/useDialog";
+import { PHASE_MARGIN_PRESETS } from "@/js/blackbox/spectral_analysis";
+import type { SysConfig } from "@/js/blackbox/chirp_bbl_parser";
 import { i18n } from "@/js/localization";
 import UiBox from "../../elements/UiBox.vue";
 
+type Gains = AxisResult["gains"];
+type ProposedSliders = Gains["proposed"];
+type NumericGainKey = { [K in keyof Gains]: Gains[K] extends number ? K : never }[keyof Gains];
+type NumericConfigKey = { [K in keyof SysConfig]-?: SysConfig[K] extends number ? K : never }[keyof SysConfig];
+type GainFlag = "gainClamped" | "sensitivityUnreachable" | "sensitivityBinds";
+type AnalysisAxes = AnalysisResult["axes"];
+
+interface AxisDef {
+    key: AxisName;
+    labelKey: string;
+    color: string;
+    pidKey: "rollPID" | "pitchPID" | "yawPID";
+}
+
+interface PidRowDef {
+    key: string;
+    index: number;
+    label: string;
+}
+
+interface AnalysisField {
+    key: NumericGainKey;
+    labelKey: string;
+    format: (v: number) => string;
+}
+
+interface SliderField {
+    key: keyof ProposedSliders;
+    configKey: NumericConfigKey;
+    labelKey: string;
+}
+
+interface RowCell {
+    value: string | number;
+    changePct: number | null;
+}
+
+interface TableRow {
+    key: string;
+    label?: string;
+    labelKey?: string;
+    current: string | number;
+    axes: Partial<Record<AxisName, RowCell>>;
+    sectionTitleKey: string | null;
+    columnHeaders?: boolean;
+}
+
 const store = useAutotuneStore();
 const connectionStore = useConnectionStore();
-const { applyGains } = useAutotune();
+const { applyGains, recomputeGains } = useAutotune();
+const dialog = useDialog();
 
 const applied = ref(false);
 const applying = ref(false);
 const applyError = ref("");
-const selectedAxisKey = ref(null);
+const selectedAxisKey = ref<AxisName | null>(null);
 
 const isConnected = computed(() => connectionStore.connectionValid);
 
-const AXIS_DEFS = [
-    { key: "roll", labelKey: "autotuneAxisRoll", color: "#e74c3c", pidKey: "rollPID" },
-    { key: "pitch", labelKey: "autotuneAxisPitch", color: "#2ecc71", pidKey: "pitchPID" },
-    { key: "yaw", labelKey: "autotuneAxisYaw", color: "#3498db", pidKey: "yawPID" },
+const MARGIN_OPTIONS = [
+    { value: PHASE_MARGIN_PRESETS.AGGRESSIVE, labelKey: "autotuneMarginAggressive" },
+    { value: PHASE_MARGIN_PRESETS.NORMAL, labelKey: "autotuneMarginNormal" },
+    { value: PHASE_MARGIN_PRESETS.CONSERVATIVE, labelKey: "autotuneMarginConservative" },
 ];
 
-const PID_ROWS = [
+const marginOptions = computed(() =>
+    MARGIN_OPTIONS.map((opt) => ({
+        label: `${i18n.getMessage(opt.labelKey)} (${opt.value}°)`,
+        value: opt.value,
+    })),
+);
+
+// `null` is the select's "no axis" value (see selectedAxisKey), so the item type admits it.
+const axisOptions = computed((): { label: string; value: AxisName | null }[] =>
+    visibleAxisList.value.map((axis) => ({ label: i18n.getMessage(axis.labelKey), value: axis.key })),
+);
+
+const targetPhaseMargin = computed({
+    get: () => store.targetPhaseMarginDeg,
+    set: (v: number) => {
+        store.targetPhaseMarginDeg = v;
+    },
+});
+
+// Changing the target only re-derives gains from the stored transfer functions,
+// so there is no need to re-import the log. Watching the store rather than
+// acting in the setter also covers writes from elsewhere, such as reset().
+watch(
+    () => store.targetPhaseMarginDeg,
+    (target) => {
+        recomputeGains(target);
+        applied.value = false;
+        applyError.value = "";
+    },
+);
+
+// Axes whose phase never reaches the requested margin, so their gain is held.
+const unreachableAxisDefs = computed(() =>
+    visibleAxisList.value.filter((axis) => {
+        const g = store.analysisResult?.axes?.[axis.key]?.gains;
+        return g && !Number.isFinite(g.targetCrossover);
+    }),
+);
+
+const unreachableAxes = computed(() => unreachableAxisDefs.value.map((axis) => i18n.getMessage(axis.labelKey)));
+
+// Scoped to the axes actually named in the message, so the limit reported is
+// theirs — a reachable axis with a lower ceiling must not be quoted here.
+const maxReachableMargin = computed(() => {
+    const values = unreachableAxisDefs.value
+        .map((axis) => store.analysisResult?.axes?.[axis.key]?.gains?.maxPhaseMargin)
+        .filter((v): v is number => Number.isFinite(v));
+    return values.length ? Math.min(...values) : Number.NaN;
+});
+
+const unreachableMessage = computed(() =>
+    i18n.getMessage("autotuneTargetUnreachable", [
+        unreachableAxes.value.join(", "),
+        targetPhaseMargin.value,
+        formatDeg(maxReachableMargin.value),
+    ]),
+);
+
+// Axes carrying a given flag on their recommendation, as { name, gains } pairs
+// so a message can quote the figures behind the flag as well as name the axis.
+function flaggedAxes(flag: GainFlag) {
+    return visibleAxisList.value
+        .map((axis) => ({
+            name: i18n.getMessage(axis.labelKey),
+            gains: store.analysisResult?.axes?.[axis.key]?.gains,
+        }))
+        .filter((entry): entry is { name: string; gains: Gains } => Boolean(entry.gains?.[flag]));
+}
+
+function axesFlagged(flag: GainFlag) {
+    return flaggedAxes(flag).map((entry) => entry.name);
+}
+
+// Every way the recommendation can be something other than the margin target
+// met in full. Without these the table shows a crossover limit and a proposed
+// gain with no indication that the second does not reach the first.
+const recommendationNotes = computed(() => {
+    const notes: { key: string; text: string }[] = [];
+
+    if (unreachableAxes.value.length) {
+        notes.push({ key: "unreachable", text: unreachableMessage.value });
+    }
+
+    // Split by which end of the per-pass range bit. A craft asking for more gain
+    // than one pass allows and one asking for less are held by different bounds,
+    // so they cannot share a single quoted limit.
+    const clamped = flaggedAxes("gainClamped");
+    const clampedUp = clamped.filter((e) => e.gains.requestedGain > e.gains.gainClampLimit);
+    const clampedDown = clamped.filter((e) => e.gains.requestedGain < e.gains.gainClampLimit);
+
+    if (clampedUp.length) {
+        notes.push({
+            key: "clamped-up",
+            text: i18n.getMessage("autotuneGainClamped", [
+                clampedUp.map((e) => e.name).join(", "),
+                Math.max(...clampedUp.map((e) => e.gains.requestedGain)).toFixed(1),
+                clampedUp[0].gains.gainClampLimit.toFixed(1),
+            ]),
+        });
+    }
+
+    if (clampedDown.length) {
+        notes.push({
+            key: "clamped-down",
+            text: i18n.getMessage("autotuneGainClamped", [
+                clampedDown.map((e) => e.name).join(", "),
+                Math.min(...clampedDown.map((e) => e.gains.requestedGain)).toFixed(2),
+                clampedDown[0].gains.gainClampLimit.toFixed(1),
+            ]),
+        });
+    }
+
+    const fragile = axesFlagged("sensitivityUnreachable");
+    if (fragile.length) {
+        notes.push({
+            key: "fragile",
+            text: i18n.getMessage("autotuneSensitivityUnreachable", [fragile.join(", ")]),
+        });
+    }
+
+    // Suppressed where the stronger message above already covers the axis.
+    const binds = axesFlagged("sensitivityBinds").filter((name) => !fragile.includes(name));
+    if (binds.length) {
+        notes.push({ key: "binds", text: i18n.getMessage("autotuneSensitivityBinds", [binds.join(", ")]) });
+    }
+
+    return notes;
+});
+
+const AXIS_DEFS: AxisDef[] = [
+    { key: "roll", labelKey: "autotuneAxisRoll", color: "var(--color-axis-roll)", pidKey: "rollPID" },
+    { key: "pitch", labelKey: "autotuneAxisPitch", color: "var(--color-axis-pitch)", pidKey: "pitchPID" },
+    { key: "yaw", labelKey: "autotuneAxisYaw", color: "var(--color-axis-yaw)", pidKey: "yawPID" },
+];
+
+const PID_ROWS: PidRowDef[] = [
     { key: "P", index: 0, label: "P" },
     { key: "I", index: 1, label: "I" },
     { key: "D", index: 2, label: "D" },
 ];
 
-const ANALYSIS_FIELDS = [
+const ANALYSIS_FIELDS: AnalysisField[] = [
     { key: "bandwidth", labelKey: "autotuneBandwidth", format: formatHz },
+    { key: "crossover", labelKey: "autotuneCrossover", format: formatHz },
     { key: "phaseMargin", labelKey: "autotunePhaseMargin", format: formatDeg },
+    { key: "targetCrossover", labelKey: "autotuneTargetCrossover", format: formatHz },
+    { key: "maxPhaseMargin", labelKey: "autotuneMaxPhaseMargin", format: formatDeg },
+    { key: "loopDelay", labelKey: "autotuneLoopDelay", format: formatMs },
     { key: "resonantPeak", labelKey: "autotuneResonantPeak", format: formatDb },
     { key: "sensitivityPeak", labelKey: "autotuneSensitivityPeak", format: formatDb },
+    { key: "predictedSensitivityPeak", labelKey: "autotunePredictedSensitivity", format: formatDb },
     { key: "overshoot", labelKey: "autotuneOvershoot", format: formatPct },
     { key: "riseTime", labelKey: "autotuneRiseTime", format: formatMs },
     { key: "settlingTime", labelKey: "autotuneSettlingTime", format: formatMs },
     { key: "coherencePct", labelKey: "autotuneCoherence", format: formatPct },
 ];
 
-const SLIDER_FIELDS = [
+const SLIDER_FIELDS: SliderField[] = [
     {
         key: "slider_master_multiplier",
         configKey: "simplified_master_multiplier",
@@ -180,8 +374,8 @@ watch(selectedAxisKey, () => {
     applyError.value = "";
 });
 
-function buildCurrentPidRow(row, sc, isFirst) {
-    const perAxis = {};
+function buildCurrentPidRow(row: PidRowDef, sc: SysConfig, isFirst: boolean): TableRow {
+    const perAxis: TableRow["axes"] = {};
     for (const a of visibleAxisList.value) {
         const pid = sc[a.pidKey];
         if (pid) {
@@ -197,8 +391,8 @@ function buildCurrentPidRow(row, sc, isFirst) {
     };
 }
 
-function buildAnalysisRow(field, axes, isFirst) {
-    const perAxis = {};
+function buildAnalysisRow(field: AnalysisField, axes: AnalysisAxes, isFirst: boolean): TableRow {
+    const perAxis: TableRow["axes"] = {};
     for (const a of visibleAxisList.value) {
         const val = axes[a.key]?.gains?.[field.key];
         if (val != null) {
@@ -214,9 +408,9 @@ function buildAnalysisRow(field, axes, isFirst) {
     };
 }
 
-function buildSliderRow(field, axes, sc, isFirst) {
+function buildSliderRow(field: SliderField, axes: AnalysisAxes, sc: SysConfig, isFirst: boolean): TableRow {
     const current = sc[field.configKey] ?? 100;
-    const perAxis = {};
+    const perAxis: TableRow["axes"] = {};
     for (const a of visibleAxisList.value) {
         const proposed = axes[a.key]?.gains?.proposed?.[field.key];
         if (proposed != null) {
@@ -234,7 +428,7 @@ function buildSliderRow(field, axes, sc, isFirst) {
     };
 }
 
-const tableRows = computed(() => {
+const tableRows = computed((): TableRow[] => {
     const axes = store.analysisResult?.axes;
     const sc = store.analysisResult?.sysConfig;
     if (!axes || !sc) {
@@ -248,7 +442,7 @@ const tableRows = computed(() => {
     ];
 });
 
-function changeClass(pct) {
+function changeClass(pct: number | null | undefined) {
     if (pct == null) {
         return "";
     }
@@ -261,23 +455,26 @@ function changeClass(pct) {
     return "text-dimmed";
 }
 
-function formatHz(v) {
-    return v == null ? "--" : `${v.toFixed(1)} Hz`;
+// Metrics are NaN when the measurement gives no basis for them \u2014 for example a
+// craft whose open-loop phase never reaches the margin limit inside the
+// coherent band. Render those as "--" rather than "NaN".
+function formatHz(v: number) {
+    return Number.isFinite(v) ? `${v.toFixed(1)} Hz` : "--";
 }
-function formatDeg(v) {
-    return v == null ? "--" : `${v.toFixed(1)}\u00B0`;
+function formatDeg(v: number) {
+    return Number.isFinite(v) ? `${v.toFixed(1)}\u00B0` : "--";
 }
-function formatDb(v) {
-    return v == null ? "--" : `${v.toFixed(1)} dB`;
+function formatDb(v: number) {
+    return Number.isFinite(v) ? `${v.toFixed(1)} dB` : "--";
 }
-function formatPct(v) {
-    return v == null ? "--" : `${v.toFixed(0)}%`;
+function formatPct(v: number) {
+    return Number.isFinite(v) ? `${v.toFixed(0)}%` : "--";
 }
-function formatMs(v) {
-    return v == null ? "--" : `${v.toFixed(1)} ms`;
+function formatMs(v: number) {
+    return Number.isFinite(v) ? `${v.toFixed(1)} ms` : "--";
 }
 
-function formatChangePct(v) {
+function formatChangePct(v: number | null | undefined) {
     if (v == null || v === 0) {
         return "--";
     }
@@ -294,6 +491,19 @@ async function onApply() {
         return;
     }
 
+    const confirmed = await dialog.showYesNo(
+        i18n.getMessage("autotuneApplyConfirmTitle"),
+        i18n.getMessage("autotuneApplyConfirmText"),
+        {
+            destructive: true,
+            yesText: i18n.getMessage("autotuneApplyGains"),
+            noText: i18n.getMessage("cancel"),
+        },
+    );
+    if (!confirmed) {
+        return;
+    }
+
     applyError.value = "";
     applied.value = false;
     applying.value = true;
@@ -301,7 +511,9 @@ async function onApply() {
         await applyGains(proposed);
         applied.value = true;
     } catch (err) {
-        applyError.value = `${i18n.getMessage("autotuneApplyFailed")}: ${err?.message || err}`;
+        // `err?.message || err` for a caught value of unknown type.
+        const message = typeof err === "object" && err !== null ? Reflect.get(err, "message") : undefined;
+        applyError.value = `${i18n.getMessage("autotuneApplyFailed")}: ${message || err}`;
     } finally {
         applying.value = false;
     }
@@ -315,7 +527,7 @@ async function onApply() {
     th,
     td {
         padding: 5px 10px;
-        text-align: left;
+        text-align: start;
         border-bottom: 1px solid var(--surface-200);
         font-size: 12px;
     }

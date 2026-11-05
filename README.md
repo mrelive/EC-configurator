@@ -39,7 +39,7 @@ The minimum required version of windows is Windows 8.
 
 #### MacOS X users
 
-Changes to the security model used in the latest versions of MacOS X 10.14 (Mojave) and 10.15 (Catalina) mean that the operating system will show an error message ('"Betaflight Configurator.app" is damaged and can’t be opened. You should move it to the Trash.') when trying to install the application. To work around this, run the following command in a terminal after installing: `sudo xattr -rd com.apple.quarantine /Applications/Betaflight\ Configurator.app`.
+Changes to the security model used in the latest versions of MacOS X 10.14 (Mojave) and 10.15 (Catalina) mean that the operating system will show an error message ('"Betaflight Configurator.app" is damaged and can’t be opened. You should move it to the Trash.') when trying to install the application. To work around this, run the following command in a terminal after installing: `sudo xattr -rd com.apple.quarantine /Applications/Betaflight\ App.app`.
 
 #### Linux users
 
@@ -110,11 +110,15 @@ If you prefer to have the application in English or any other language, you can 
 
 ### Technical details
 
-The next versions of the App will be a modern tool that based on PWA (Progressive Web Application) and uses principally Node, npm, Vite and Vue for development and building. For Android we use Capacitor as wrapper over the PWA. To build and develop over it, follow the instructions below.
+The next versions of the App will be a modern tool that based on PWA (Progressive Web Application) and uses principally Node, npm, Vite, Vue and TypeScript for development and building. For Android we use Capacitor as wrapper over the PWA. To build and develop over it, follow the instructions below.
 
 ### Prepare your environment
 
-1. Install [node.js](https://nodejs.org/) (refer to [.nvmrc](./.nvmrc) for minimum required version)
+1. Install [node.js](https://nodejs.org/) — use the exact version in [.nvmrc](./.nvmrc)
+   (`nvm use` if you have [nvm](https://github.com/nvm-sh/nvm)). The bundled npm must be
+   11.6.1 or newer: npm 11.6.0 and older write `package-lock.json` in a different shape, so
+   an older npm makes every commit rewrite the whole lockfile. `npm install` warns with
+   `EBADENGINE` if your toolchain is too old, and CI fails the *Lockfile in sync* check.
 
 ### PWA version
 
@@ -124,6 +128,13 @@ The next versions of the App will be a modern tool that based on PWA (Progressiv
 2. Run `npm run dev`.
 
 The web app will be available at http://localhost:8080 with full HMR.
+
+On the **Modes** tab, use the search field above the list to filter mode names as you
+type. Search starts at two characters, matches any part of the displayed name, and
+ignores case and surrounding whitespace. Results keep the existing mode order and
+respect **Hide unused modes**. Clear the field or reduce it to one character to
+remove the text filter; mode ranges and links are preserved while hidden.
+The no-matches message appears only after mode data has loaded successfully.
 
 #### Run production version
 
@@ -164,6 +175,20 @@ Any change make in the code will reload the app in the Android device.
 ### Running tests
 
 `npm test`
+
+### Linting and type checking
+
+`npm run lint` runs ESLint and the TypeScript checker (`vue-tsc`); CI runs the same checks. `npm run lint:fix` and `npm run format` fix what they can.
+
+The App is written in TypeScript ([#5542](https://github.com/betaflight/betaflight-configurator/issues/5542)):
+
+- New files are `.ts`, and components use `<script setup lang="ts">`. Lint rejects a `.js` file under `src/`; the only exceptions are the dev-only `src/js/msp/debug/` and the vendored `src/js/utils/three/`, each typed by a `.d.ts`.
+- `strict` is on and `allowJs` is off, so everything the App imports is type-checked.
+- A test you change for another reason converts to `.test.ts` in the same pull request.
+- Components never import MSP at runtime. Talking to the flight controller belongs in a Pinia store action or a composable, and lint enforces this. Type-only imports (`import type`) are allowed.
+- Colours come from the theme tokens in `src/css/theme.css`; lint rejects a hex colour in a component's styles.
+
+[AGENTS.md](./AGENTS.md) has the full coding conventions and architecture rules.
 
 ## Support and Developers Channel
 

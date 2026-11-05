@@ -1,15 +1,15 @@
 <template>
-    <UiBox :title="$t('flightPlanWaypointList')" class="waypoint-list">
+    <UiBox :title="$t('flightPlanWaypointList')" type="neutral" collapsible class="waypoint-list">
         <div class="flex justify-end">
             <UButton
                 icon="i-lucide-plus"
-                size="sm"
+                size="xs"
                 :aria-label="$t('flightPlanAddWaypoint')"
                 @click="handleAddWaypoint"
             />
         </div>
 
-        <UiBox highlight class="mb-3" v-if="!waypoints.length">
+        <UiBox type="neutral" highlight class="mb-3" v-if="!waypoints.length">
             <p v-html="$t('flightPlanNoWaypoints')"></p>
         </UiBox>
         <div v-else class="waypoints">
@@ -41,7 +41,7 @@
                     </div>
                     <div class="waypoint-details">
                         <template v-if="waypoint.type === 'alt_change'">
-                            {{ $t("flightPlanTypeAltChange") }} → {{ waypoint.altitude }}ft AMSL
+                            {{ $t("flightPlanTypeAltChange") }} → {{ formatAltitude(waypoint.altitude) }} AMSL
                         </template>
                         <template v-else-if="waypoint.type === 'delay'">
                             {{ $t("flightPlanTypeDelay") }}: {{ waypoint.duration }}min
@@ -50,7 +50,7 @@
                             {{ $t("flightPlanTypeYawRate") }}: {{ waypoint.speed }}°/s
                         </template>
                         <template v-else>
-                            {{ waypoint.altitude }}ft AMSL - {{ waypoint.speed }}kts -
+                            {{ formatAltitude(waypoint.altitude) }} AMSL - {{ formatSpeed(waypoint.speed) }} -
                             {{ getWaypointTypeLabel(waypoint.type) }}
                             <span v-if="waypoint.type === 'hold'" class="hold-details">
                                 ({{ waypoint.duration }}min, {{ getPatternLabel(waypoint.pattern) }})
@@ -97,11 +97,12 @@
     </Dialog>
 </template>
 
-<script setup>
-import { ref } from "vue";
+<script setup lang="ts">
+import { onScopeDispose, ref } from "vue";
 import Dialog from "@/components/elements/Dialog.vue";
 import UiBox from "@/components/elements/UiBox.vue";
 import { useFlightPlan } from "@/composables/useFlightPlan";
+import { useFlightPlanUnits } from "@/composables/useFlightPlanUnits";
 import { i18n } from "@/js/localization";
 
 const {
@@ -116,23 +117,25 @@ const {
     getWaypointTypeLabel,
     isModifierWaypointType,
 } = useFlightPlan();
+const { formatAltitude, formatSpeed } = useFlightPlanUnits();
 
 const showDeleteDialog = ref(false);
-const waypointToDelete = ref(null);
+const waypointToDelete = ref<string | null>(null);
 
 // Drag and drop state
-const draggedUid = ref(null);
-const dragOverUid = ref(null);
+const draggedUid = ref<string | null>(null);
+const dragOverUid = ref<string | null>(null);
+let dragStartTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const handleAddWaypoint = () => {
     openAddWaypoint();
 };
 
-const handleEdit = (uid) => {
+const handleEdit = (uid: string) => {
     editWaypoint(uid);
 };
 
-const handleRemove = (uid) => {
+const handleRemove = (uid: string) => {
     waypointToDelete.value = uid;
     showDeleteDialog.value = true;
 };
@@ -145,8 +148,8 @@ const confirmDelete = () => {
     showDeleteDialog.value = false;
 };
 
-const getPatternLabel = (pattern) => {
-    const labels = {
+const getPatternLabel = (pattern: string) => {
+    const labels: Record<string, string | undefined> = {
         circle: i18n.getMessage("flightPlanPatternCircle"),
         figure8: i18n.getMessage("flightPlanPatternFigure8"),
         orbit: i18n.getMessage("flightPlanPatternOrbit"),
@@ -155,40 +158,56 @@ const getPatternLabel = (pattern) => {
 };
 
 // Drag and drop handlers
-const handleDragStart = (event, uid) => {
+const handleDragStart = (event: DragEvent, uid: string) => {
     draggedUid.value = uid;
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", uid);
+    if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", uid);
+    }
 
     // Capture element synchronously before setTimeout (event.currentTarget becomes null inside timeout)
-    const el = event.currentTarget;
+    const el = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
 
     // Add a slight delay to allow the drag to start before styling changes
-    setTimeout(() => {
+    if (dragStartTimeout !== null) {
+        clearTimeout(dragStartTimeout);
+    }
+    dragStartTimeout = setTimeout(() => {
+        dragStartTimeout = null;
         if (el) {
             el.classList.add("dragging");
         }
     }, 0);
 };
 
-const handleDragOver = (event, uid) => {
+onScopeDispose(() => {
+    if (dragStartTimeout !== null) {
+        clearTimeout(dragStartTimeout);
+        dragStartTimeout = null;
+    }
+});
+
+const handleDragOver = (event: DragEvent, uid: string) => {
     event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
+    if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "move";
+    }
 
     if (draggedUid.value !== uid) {
         dragOverUid.value = uid;
     }
 };
 
-const handleDragLeave = (event) => {
+const handleDragLeave = (event: DragEvent) => {
     // Only clear dragOver if we're leaving the waypoint item entirely
-    if (event.currentTarget.contains(event.relatedTarget)) {
+    const item = event.currentTarget;
+    if (item instanceof Node && event.relatedTarget instanceof Node && item.contains(event.relatedTarget)) {
         return;
     }
     dragOverUid.value = null;
 };
 
-const handleDrop = (event, targetUid) => {
+const handleDrop = (event: DragEvent, targetUid: string) => {
     event.preventDefault();
 
     if (draggedUid.value && draggedUid.value !== targetUid) {
@@ -200,110 +219,114 @@ const handleDrop = (event, targetUid) => {
     dragOverUid.value = null;
 };
 
-const handleDragEnd = (event) => {
-    event.currentTarget.classList.remove("dragging");
+const handleDragEnd = (event: DragEvent) => {
+    if (event.currentTarget instanceof HTMLElement) {
+        event.currentTarget.classList.remove("dragging");
+    }
     draggedUid.value = null;
     dragOverUid.value = null;
 };
 </script>
 
-<style scoped>
-.note {
-    padding: 1rem;
-    text-align: center;
-    color: var(--surface-700);
-    font-style: italic;
-}
+<style lang="less">
+.waypoint-list {
+    .note {
+        padding: 1rem;
+        text-align: center;
+        color: var(--surface-700);
+        font-style: italic;
+    }
 
-.waypoint-item {
-    display: flex;
-    align-items: center;
-    padding: 0.5rem;
-    background: var(--surface-50);
-    border-bottom: 1px solid var(--surface-500);
-    color: var(--text);
-    cursor: grab;
-    transition:
-        background 0.2s,
-        opacity 0.2s,
-        transform 0.2s;
-}
+    .waypoint-item {
+        display: flex;
+        align-items: center;
+        padding: 0.5rem;
+        background: var(--surface-50);
+        border-bottom: 1px solid var(--surface-500);
+        color: var(--text);
+        cursor: grab;
+        transition:
+            background 0.2s,
+            opacity 0.2s,
+            transform 0.2s;
+    }
 
-.waypoint-item:active {
-    cursor: grabbing;
-}
+    .waypoint-item:active {
+        cursor: grabbing;
+    }
 
-.waypoint-item.dragging {
-    opacity: 0.4;
-}
+    .waypoint-item.dragging {
+        opacity: 0.4;
+    }
 
-.waypoint-item.drag-over {
-    border-top: 3px solid var(--primary-500);
-    transform: translateY(2px);
-}
+    .waypoint-item.drag-over {
+        border-top: 3px solid var(--primary-500);
+        transform: translateY(2px);
+    }
 
-.waypoint-item:first-child {
-    border-top-left-radius: 8px;
-    border-top-right-radius: 8px;
-}
+    .waypoint-item:first-child {
+        border-start-start-radius: 8px;
+        border-start-end-radius: 8px;
+    }
 
-.waypoint-item:last-child {
-    border-bottom-left-radius: 8px;
-    border-bottom-right-radius: 8px;
-    border-bottom: none;
-}
+    .waypoint-item:last-child {
+        border-end-start-radius: 8px;
+        border-end-end-radius: 8px;
+        border-bottom: none;
+    }
 
-.waypoint-item:hover {
-    background: var(--surface-100);
-}
+    .waypoint-item:hover {
+        background: var(--surface-100);
+    }
 
-.waypoint-item.selected {
-    background: var(--primary-500);
-    border-left: 3px solid var(--primary-700);
-}
+    .waypoint-item.selected {
+        background: var(--primary-500);
+        border-inline-start: 3px solid var(--primary-700);
+    }
 
-.waypoint-item.selected .waypoint-order {
-    background: var(--surface-50);
-    color: var(--primary-500);
-}
+    .waypoint-item.selected .waypoint-order {
+        background: var(--surface-50);
+        color: var(--primary-500);
+    }
 
-.waypoint-item.selected .waypoint-coords,
-.waypoint-item.selected .waypoint-details {
-    color: var(--surface-50);
-}
+    .waypoint-item.selected .waypoint-coords,
+    .waypoint-item.selected .waypoint-details {
+        color: var(--surface-50);
+    }
 
-.waypoint-order {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    background: var(--primary-500);
-    color: var(--surface-50);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: bold;
-    margin-right: 0.75rem;
-    flex-shrink: 0;
-}
+    .waypoint-order {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: var(--primary-500);
+        color: var(--surface-50);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        margin-inline-end: 0.75rem;
+        flex-shrink: 0;
+    }
 
-.waypoint-info {
-    flex: 1;
-    min-width: 0;
-}
+    .waypoint-info {
+        flex: 1;
+        min-width: 0;
+    }
 
-.waypoint-coords {
-    font-size: 0.85rem;
-    color: var(--text);
-    font-weight: 500;
-}
+    .waypoint-coords {
+        font-size: 0.85rem;
+        color: var(--text);
+        font-weight: 500;
+    }
 
-.waypoint-details {
-    font-size: 0.75rem;
-    color: var(--surface-700);
-    margin-top: 0.2rem;
-}
+    .waypoint-details {
+        font-size: 0.75rem;
+        color: var(--surface-700);
+        margin-top: 0.2rem;
+    }
 
-.hold-details {
-    font-style: italic;
+    .hold-details {
+        font-style: italic;
+    }
 }
 </style>

@@ -23,7 +23,18 @@ export default {
                 {
                     color: "primary",
                     variant: "solid",
-                    class: "disabled:bg-accented disabled:text-toned",
+                    // Primary is yellow (#ffbb00); Nuxt UI defaults text-inverted to #fff in light
+                    // mode. Override with black text for both light and dark modes — yellow always
+                    // needs dark text regardless of theme. disabled:!text-toned restores the muted
+                    // disabled appearance which !text-black would otherwise override.
+                    class: "!text-black disabled:bg-accented disabled:!text-toned",
+                },
+                {
+                    color: "primary",
+                    variant: "soft",
+                    // Yellow text on the 10% yellow tint is ~1.6:1 in light mode. primary-800 brings
+                    // it to ~5.8:1 (WCAG AA); dark mode keeps the default, which already reads well.
+                    class: "text-primary-800 dark:text-primary",
                 },
             ],
             defaultVariants: {
@@ -41,6 +52,17 @@ export default {
                 text: "whitespace-normal",
             },
         },
+        modal: {
+            slots: {
+                // Slot overrides replace the base class string (not merged), so Nuxt UI's base
+                // classes are restated with the z-index appended. The bg-elevated/75 dimming is
+                // unaffected: it comes from the overlay variant, composed on top at runtime.
+                // z-3000/z-3001 keeps modals above all app dialogs (z-1000–2001) and the
+                // ConnectButton dropdown (z-2100), with the content above its own overlay.
+                overlay: "fixed inset-0 z-3000",
+                content: "bg-default divide-y divide-default flex flex-col focus:outline-none z-3001",
+            },
+        },
         switch: {
             slots: {
                 base: "cursor-pointer",
@@ -53,7 +75,11 @@ export default {
         select: {
             slots: {
                 base: "cursor-pointer",
-                item: "cursor-pointer",
+                content: "min-w-fit",
+                // data-[state=checked] is set by Reka UI on the selected item; itemTrailingIcon
+                // only renders inside SelectItemIndicator so colouring it never affects other icons.
+                item: "cursor-pointer data-[state=checked]:before:bg-primary/15 data-[state=checked]:text-highlighted data-[state=checked]:font-medium data-[state=checked]:data-highlighted:before:bg-primary/25",
+                itemTrailingIcon: "text-primary-700 dark:text-primary",
             },
             defaultVariants: {
                 size: "sm",
@@ -62,7 +88,8 @@ export default {
         selectMenu: {
             slots: {
                 base: "cursor-pointer",
-                item: "cursor-pointer",
+                item: "cursor-pointer data-[state=checked]:before:bg-primary/15 data-[state=checked]:text-highlighted data-[state=checked]:font-medium data-[state=checked]:data-highlighted:before:bg-primary/25",
+                itemTrailingIcon: "text-primary-700 dark:text-primary",
             },
             defaultVariants: {
                 size: "sm",
@@ -77,6 +104,20 @@ export default {
             slots: {
                 root: "min-w-12 w-28",
                 base: "appearance-none",
+            },
+            variants: {
+                orientation: {
+                    vertical: {
+                        // Nuxt UI scales vertical spinners to 80%, leaving ~19x13px hit
+                        // targets whose click zones overlap mid-field. Instead, split the
+                        // field height between the two buttons (no overlap) and widen them —
+                        // width is unconstrained. Icons are sized to the button height.
+                        increment:
+                            "top-0 end-0 pe-1 h-1/2 scale-100 [&>button]:h-full [&>button]:py-0 [&>button]:px-1.5 [&>button>*]:size-3",
+                        decrement:
+                            "bottom-0 end-0 pe-1 h-1/2 scale-100 [&>button]:h-full [&>button]:py-0 [&>button]:px-1.5 [&>button>*]:size-3",
+                    },
+                },
             },
             defaultVariants: {
                 size: "sm",

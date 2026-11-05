@@ -1,89 +1,79 @@
 <template>
-    <dialog ref="dialogRef" class="dialogReboot" @cancel.prevent>
-        <div class="content">
-            <div class="reboot-status">{{ status }}</div>
-            <div class="reboot-progress-container">
-                <div class="reboot-progress-bar" :style="{ width: progress + '%' }"></div>
-            </div>
-        </div>
-    </dialog>
+    <UModal :open="open" :title="status" :close="false" :dismissible="false">
+        <template #body>
+            <UProgress :model-value="progress" :max="100" />
+        </template>
+    </UModal>
 </template>
 
-<script setup>
-import { ref } from "vue";
+<script setup lang="ts">
+import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { getConnectionState } from "@/js/connection_state";
+import { useDialogStore } from "@/stores/dialog";
+import { i18n } from "@/js/localization";
+import { useConnectionStore } from "@/stores/connection";
 
-defineProps({
-    status: {
-        type: String,
-        default: "Rebooting...",
-    },
-    progress: {
-        type: Number,
-        default: 0,
-    },
+// How long the outcome stays on screen before the dialog closes itself.
+const RESULT_LINGER_MS = 1000;
+const TICK_MS = 100;
+
+const dialogStore = useDialogStore();
+const connectionStore = useConnectionStore();
+const open = ref(false);
+
+// The reboot window is nulled the moment the reboot concludes, so snapshot its numbers —
+// the last frame still needs them to draw a full bar.
+const startedAt = getConnectionState().rebootWindowStartedAt;
+const durationMs = getConnectionState().rebootWindowMs || 1;
+
+const now = ref(Date.now());
+const ticker = setInterval(() => (now.value = Date.now()), TICK_MS);
+
+// serial_backend's reconnect cycle owns the window: it waits for the FC, retries, and
+// concludes. This dialog only reports what that owner decided.
+const rebooting = computed(() => getConnectionState().isRebootWindowOpen);
+const progress = computed(() => (rebooting.value ? Math.min(100, ((now.value - startedAt) / durationMs) * 100) : 100));
+const status = computed(() => {
+    if (rebooting.value) {
+        return i18n.getMessage("rebootFlightController");
+    }
+    return i18n.getMessage(
+        connectionStore.connectionValid ? "rebootFlightControllerReady" : "rebootFlightControllerFailed",
+    );
 });
 
-const dialogRef = ref(null);
+let lingerTimer: ReturnType<typeof setTimeout> | null = null;
 
-const show = () => {
-    dialogRef.value?.showModal();
-};
+// The dialog store holds one activeDialog. A user disconnect closes this dialog through
+// serial_backend, unmounting the component — a linger timer left running would then close
+// whatever dialog took the slot in the meantime.
+function stopTimers() {
+    clearInterval(ticker);
+    if (lingerTimer !== null) {
+        clearTimeout(lingerTimer);
+    }
+    lingerTimer = null;
+}
 
-const close = () => {
-    dialogRef.value?.close();
-};
+watch(
+    rebooting,
+    (stillRebooting) => {
+        if (stillRebooting) {
+            return;
+        }
+        clearInterval(ticker);
+        lingerTimer = setTimeout(() => {
+            lingerTimer = null;
+            dialogStore.close();
+        }, RESULT_LINGER_MS);
+    },
+    { immediate: true },
+);
+
+onBeforeUnmount(stopTimers);
 
 defineExpose({
-    show,
-    close,
-    dialog: dialogRef,
+    show: () => (open.value = true),
+    close: () => (open.value = false),
 });
 </script>
-
-<style scoped>
-.dialogReboot:not([open]) {
-    display: none;
-}
-
-.dialogReboot {
-    display: block;
-    z-index: 1000;
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    margin: 0;
-
-    border: 1px solid var(--subtleAccent);
-    border-radius: 5px;
-    background-color: var(--surface-100);
-    color: var(--text);
-    padding: 20px;
-    max-width: 400px;
-    width: 100%;
-}
-
-.dialogReboot::backdrop {
-    background: rgba(0, 0, 0, 0.5);
-}
-
-.reboot-progress-container {
-    width: 100%;
-    background-color: var(--surface-0);
-    border-radius: 3px;
-    margin: 15px 0 5px;
-    height: 10px;
-    overflow: hidden;
-}
-
-.reboot-progress-bar {
-    height: 100%;
-    background-color: var(--primary-500);
-    transition: width 0.1s linear;
-}
-
-.reboot-status {
-    text-align: center;
-    margin: 10px 0;
-}
-</style>

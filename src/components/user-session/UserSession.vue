@@ -40,7 +40,7 @@
             </div>
 
             <!-- Login Dialog -->
-            <UModal v-model:open="loginDialogOpen" :ui="{ overlay: 'z-3000', content: 'max-w-sm z-3001' }">
+            <UModal v-model:open="loginDialogOpen" :ui="{ content: 'max-w-sm' }">
                 <template #header="{ close }">
                     <div class="flex items-start justify-between gap-2 w-full">
                         <div class="dialog-header-stack">
@@ -166,7 +166,7 @@
             </UModal>
 
             <!-- Verification Code Dialog -->
-            <UModal v-model:open="verificationDialogOpen" :ui="{ overlay: 'z-3000', content: 'max-w-sm z-3001' }">
+            <UModal v-model:open="verificationDialogOpen" :ui="{ content: 'max-w-sm' }">
                 <template #header="{ close }">
                     <div class="flex items-start justify-between gap-2 w-full">
                         <div class="dialog-header-stack">
@@ -202,13 +202,7 @@
             </UModal>
 
             <!-- Waiting Dialog -->
-            <UModal
-                v-model:open="waitingDialogOpen"
-                :close="false"
-                :dismissible="false"
-                title=""
-                :ui="{ overlay: 'z-3000', content: 'z-3001' }"
-            >
+            <UModal v-model:open="waitingDialogOpen" :close="false" :dismissible="false" title="">
                 <template #body>
                     <div class="waiting-container">
                         <div class="waiting-spinner" aria-hidden="true"></div>
@@ -220,11 +214,12 @@
     </div>
 </template>
 
-<script>
+<script lang="ts">
 import { defineComponent } from "vue";
+import type { DropdownMenuItem } from "@nuxt/ui";
 import { useUserSession } from "./UserSession";
 import { switchTab } from "@/js/tab_switch.js";
-import { sidebarItems } from "@/components/sidebar/sidebar_items.js";
+import { sidebarItems } from "@/components/sidebar/sidebar_items";
 import { i18n } from "@/js/localization";
 
 export default defineComponent({
@@ -238,10 +233,10 @@ export default defineComponent({
     setup() {
         const session = useUserSession();
 
-        function getMenuItems() {
+        function getMenuItems(): DropdownMenuItem[] {
             const name = session.displayName.value || i18n.getMessage("tabUserProfile");
             const src = session.avatarUrl.value;
-            const leadingItems = [
+            const leadingItems: DropdownMenuItem[] = [
                 {
                     label: name,
                     avatar: {
@@ -252,8 +247,8 @@ export default defineComponent({
                 },
                 { type: "separator" },
             ];
-            const tabKeys = ["backups", "user_profile"];
-            const trailingItems = [
+            const tabKeys = new Set(["backups", "user_profile"]);
+            const trailingItems: DropdownMenuItem[] = [
                 { type: "separator" },
                 {
                     label: i18n.getMessage("labelSignOut"),
@@ -265,11 +260,11 @@ export default defineComponent({
 
             return leadingItems.concat(
                 sidebarItems
-                    .filter((item) => tabKeys.includes(item.key))
+                    .filter((item) => tabKeys.has(item.key))
                     .map((item) => ({
                         label: i18n.getMessage(item.i18n),
                         icon: item.icon,
-                        onSelect: () => switchTab(item.key),
+                        onSelect: () => switchTab(item.key, { mode: item.mode }),
                     })),
                 trailingItems,
             );
@@ -375,7 +370,7 @@ export default defineComponent({
 .dialog-close-button {
     position: absolute;
     top: 10px;
-    right: 10px;
+    inset-inline-end: 10px;
 }
 
 .dialog-title {
@@ -422,13 +417,13 @@ export default defineComponent({
     opacity: 0.75;
 }
 
-.dialog-input-code :deep(input) {
+.dialog-input-code input {
     text-align: center;
     letter-spacing: 0.15em;
 }
 </style>
 
-<style scoped>
+<style lang="less">
 .waiting-container {
     display: flex;
     flex-direction: column;
@@ -436,22 +431,23 @@ export default defineComponent({
     justify-content: center;
     min-height: 120px;
     gap: 12px;
+    .waiting-spinner {
+        border: 4px solid rgba(255, 255, 255, 0.2);
+        border-top: 4px solid var(--primary-500);
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: user-session-spin 1s linear infinite;
+    }
+    .waiting-message {
+        font-size: 14px;
+        color: var(--text);
+        margin: 0;
+        text-align: center;
+    }
 }
-.waiting-spinner {
-    border: 4px solid rgba(255, 255, 255, 0.2);
-    border-top: 4px solid var(--primary-500);
-    border-radius: 50%;
-    width: 40px;
-    height: 40px;
-    animation: spin 1s linear infinite;
-}
-.waiting-message {
-    font-size: 14px;
-    color: var(--text);
-    margin: 0;
-    text-align: center;
-}
-@keyframes spin {
+
+@keyframes user-session-spin {
     0% {
         transform: rotate(0deg);
     }

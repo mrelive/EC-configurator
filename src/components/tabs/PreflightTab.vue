@@ -5,7 +5,7 @@
             <WikiButton docUrl="preflight" />
 
             <!-- Location Bar -->
-            <UiBox :title="$t('preflightLocation')">
+            <UiBox :title="$t('preflightLocation')" type="neutral" collapsible>
                 <div class="location-bar">
                     <div class="location-inputs">
                         <div class="default_btn">
@@ -21,6 +21,7 @@
                                 inputmode="decimal"
                                 v-model="manualLat"
                                 :placeholder="$t('preflightLatitude')"
+                                :aria-label="$t('preflightLatitude')"
                                 class="location-input"
                             />
                             <input
@@ -28,6 +29,7 @@
                                 inputmode="decimal"
                                 v-model="manualLon"
                                 :placeholder="$t('preflightLongitude')"
+                                :aria-label="$t('preflightLongitude')"
                                 class="location-input"
                             />
                             <div class="default_btn">
@@ -109,6 +111,7 @@
                                     type="text"
                                     v-model="saveLocationLabel"
                                     :placeholder="$t('preflightLocationLabel')"
+                                    :aria-label="$t('preflightLocationLabel')"
                                     :maxlength="preflight.MAX_LABEL_LENGTH"
                                     class="location-input save-label-input"
                                     @keyup.enter="
@@ -218,7 +221,7 @@
                 <!-- Left Column: Weather -->
                 <div class="flex flex-col gap-4 md:col-span-3">
                     <!-- Current Weather -->
-                    <UiBox :title="$t('preflightCurrentWeather')">
+                    <UiBox :title="$t('preflightCurrentWeather')" type="neutral" collapsible>
                         <template #title>
                             <UIcon name="i-lucide-cloud-sun" class="size-4" />
                             <div v-if="preflight.weather.loading" class="text-primary">
@@ -298,77 +301,170 @@
                     </UiBox>
 
                     <!-- Flight Window -->
-                    <UiBox v-if="preflight.weather.daily" :title="$t('preflightFlightWindow')">
+                    <UiBox
+                        v-if="preflight.weather.daily"
+                        :title="$t('preflightFlightWindow')"
+                        :help="$t('preflightTimelineHelp')"
+                        type="neutral"
+                        collapsible
+                    >
                         <template #title>
                             <UIcon name="i-lucide-clock" class="size-4" />
                         </template>
-                        <div class="flight-window-grid">
-                            <div class="flight-window-item">
-                                <div class="fw-label">{{ $t("preflightSunrise") }}</div>
-                                <div class="fw-value">
-                                    {{ preflight.formatTime(preflight.weather.daily.sunrise) }}
-                                </div>
-                            </div>
-                            <div class="flight-window-item">
-                                <div class="fw-label">{{ $t("preflightSunset") }}</div>
-                                <div class="fw-value">
-                                    {{ preflight.formatTime(preflight.weather.daily.sunset) }}
-                                </div>
-                            </div>
-                            <div class="flight-window-item">
-                                <div class="fw-label">{{ $t("preflightCivilTwilight") }}</div>
-                                <div class="fw-value" :class="civilTwilightStatus">
-                                    {{ civilTwilightStart }} – {{ civilTwilightEnd }}
-                                </div>
-                            </div>
-                            <div class="flight-window-item">
-                                <div class="fw-label">{{ $t("preflightDaylight") }}</div>
-                                <div class="fw-value">
-                                    {{ formatDuration(preflight.weather.daily.daylightDuration) }}
-                                </div>
-                            </div>
-                            <div class="flight-window-item">
-                                <div class="fw-label">{{ $t("preflightUvIndex") }}</div>
-                                <div class="fw-value" :class="getUvStatusClass(preflight.weather.daily.uvIndexMax)">
-                                    {{ preflight.weather.daily.uvIndexMax }}
-                                    <span class="fw-sublabel">{{
-                                        $t(getUvStatusLabel(preflight.weather.daily.uvIndexMax))
-                                    }}</span>
-                                </div>
-                            </div>
-                            <div class="flight-window-item">
-                                <div class="fw-label">{{ $t("preflightTempRange") }}</div>
-                                <div class="fw-value">
-                                    {{ preflight.weather.daily.temperatureMin }}° /
-                                    {{ preflight.weather.daily.temperatureMax }}°C
-                                </div>
-                            </div>
-                            <div class="flight-window-item">
-                                <div class="fw-label">{{ $t("preflightCurrentlyDay") }}</div>
-                                <div
-                                    class="fw-value"
-                                    :class="
-                                        preflight.weather.current
-                                            ? preflight.weather.current.isDay
-                                                ? 'status-good'
-                                                : 'status-warning'
-                                            : ''
-                                    "
-                                >
+                        <fieldset
+                            v-if="flightWindow && activeLightWindows.length"
+                            class="flight-window-chart"
+                            :aria-label="$t('preflightTimelineDescription')"
+                        >
+                            <output class="fw-detail" aria-live="polite" aria-atomic="true">
+                                <strong>
                                     {{
-                                        preflight.weather.current
-                                            ? preflight.weather.current.isDay
-                                                ? $t("preflightDaytime")
-                                                : $t("preflightNighttime")
-                                            : "-"
+                                        selectedLightKind
+                                            ? lightWindowKindLabel(selectedLightKind)
+                                            : activeLightWindow
+                                              ? lightWindowLabel(activeLightWindow)
+                                              : ""
                                     }}
+                                </strong>
+                                <span class="fw-detail-ranges">
+                                    <span v-for="period in activeLightWindows" :key="`${period.start}-${period.end}`">
+                                        <template v-if="selectedLightKind && period.phase">
+                                            {{ $t(period.phase) }} ·
+                                        </template>
+                                        {{ formatLightTime(period.start) }} – {{ formatLightTime(period.end) }}
+                                        <small>· {{ formatDuration((period.end - period.start) / 1000) }}</small>
+                                    </span>
+                                </span>
+                            </output>
+                            <div class="fw-sunrise-sunset" :class="{ 'fw-sun-staggered': sunLabelsOverlap }">
+                                <div
+                                    v-for="(event, index) in flightWindow.sunEvents"
+                                    :key="`${event.label}-${event.time}`"
+                                    class="fw-sun-label"
+                                    :class="{
+                                        'fw-sun-label-start':
+                                            event.time - flightWindow.start <
+                                            (flightWindow.end - flightWindow.start) * 0.06,
+                                        'fw-sun-label-end':
+                                            flightWindow.end - event.time <
+                                            (flightWindow.end - flightWindow.start) * 0.06,
+                                        'fw-sun-label-raised': sunLabelsOverlap && index % 2 === 1,
+                                    }"
+                                    :style="{ left: lightPosition(event.time) }"
+                                >
+                                    <span>{{ $t(event.label) }}</span>
+                                    <strong>{{ formatLightTime(event.time) }}</strong>
                                 </div>
                             </div>
-                        </div>
+                            <div class="fw-light-track">
+                                <div
+                                    v-for="period in daylightHighlights"
+                                    :key="`${period.start}-${period.end}`"
+                                    class="fw-daylight-selection"
+                                    :style="{
+                                        left: lightPosition(period.start),
+                                        width: lightWidth(period),
+                                    }"
+                                    aria-hidden="true"
+                                ></div>
+                                <time
+                                    class="fw-now-marker"
+                                    :style="{ left: lightPosition(now) }"
+                                    :class="{
+                                        'fw-now-near-start': now - flightWindow.start < 60 * 60_000,
+                                        'fw-now-near-end': flightWindow.end - now < 60 * 60_000,
+                                    }"
+                                    :datetime="new Date(now).toISOString()"
+                                >
+                                    <span class="fw-now-label">{{ $t("preflightNow") }}</span>
+                                    <span class="sr-only">{{ formatLightTime(now) }}</span>
+                                </time>
+                                <div class="fw-light-bar">
+                                    <button
+                                        v-for="period in flightWindow.periods"
+                                        :key="period.start"
+                                        type="button"
+                                        class="fw-light-segment"
+                                        :class="[
+                                            `fw-period-${period.kind}`,
+                                            {
+                                                'fw-active':
+                                                    period.kind !== 'day' &&
+                                                    (selectedLightKind === period.kind ||
+                                                        (!selectedLightKind &&
+                                                            activeLightWindow?.start === period.start)),
+                                            },
+                                        ]"
+                                        :style="{ width: lightWidth(period) }"
+                                        :aria-label="lightWindowDescription(displayLightWindow(period))"
+                                        @pointerenter="activeLightWindow = displayLightWindow(period)"
+                                        @focus="activeLightWindow = displayLightWindow(period)"
+                                        @click="activeLightWindow = displayLightWindow(period)"
+                                    >
+                                        <span v-if="period.kind === 'day'">{{ $t("preflightDaylight") }}</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="fw-time-axis" aria-hidden="true">
+                                <span
+                                    v-for="tick in flightWindow.ticks"
+                                    :key="tick.time"
+                                    :class="{
+                                        'fw-time-start': tick.time === flightWindow.start,
+                                        'fw-time-end': tick.time === flightWindow.end,
+                                        'fw-time-tick-minor': !tick.major,
+                                    }"
+                                    :style="{ left: lightPosition(tick.time) }"
+                                    >{{ tick.major ? tick.label : "" }}</span
+                                >
+                            </div>
+                            <div class="fw-chart-legend">
+                                <button
+                                    v-for="item in lightLegend"
+                                    :key="item.kind"
+                                    type="button"
+                                    :disabled="
+                                        item.kind === 'day'
+                                            ? !flightWindow.daylight.length
+                                            : !flightWindow.periods.some((period) => period.kind === item.kind)
+                                    "
+                                    :aria-pressed="selectedLightKind === item.kind"
+                                    @click="selectKind(item.kind)"
+                                >
+                                    <i :class="`fw-period-${item.kind}`" aria-hidden="true"></i>{{ $t(item.label) }}
+                                </button>
+                                <span class="fw-chart-hint">
+                                    <UIcon name="i-lucide-mouse-pointer-click" class="size-3.5" aria-hidden="true" />
+                                    {{ $t("preflightTimelineHint") }}
+                                </span>
+                            </div>
+                            <div class="fw-footer-stats">
+                                <div class="fw-summary">
+                                    <span>{{ $t("preflightCivilTwilight") }}</span>
+                                    <strong>{{ civilTwilightRange }}</strong>
+                                </div>
+                                <div class="fw-uv-index">
+                                    <span class="fw-uv-label">
+                                        <UIcon name="i-lucide-sun" class="size-4" />
+                                        {{ $t("preflightUvIndex") }}
+                                    </span>
+                                    <strong :class="getUvStatusClass(preflight.weather.daily.uvIndexMax)">
+                                        {{ preflight.weather.daily.uvIndexMax ?? "-" }}
+                                        <span>{{ $t(getUvStatusLabel(preflight.weather.daily.uvIndexMax)) }}</span>
+                                    </strong>
+                                </div>
+                            </div>
+                        </fieldset>
+                        <div v-else class="no-data">{{ $t("preflightNoData") }}</div>
                     </UiBox>
 
                     <!-- Wind at Altitude (Hourly) -->
-                    <UiBox :title="$t('preflightWindForecast')" :help="$t('preflightWindForecastHelp')">
+                    <UiBox
+                        :title="$t('preflightWindForecast')"
+                        type="neutral"
+                        collapsible
+                        :help="$t('preflightWindForecastHelp')"
+                    >
                         <template #title>
                             <UIcon name="i-lucide-wind" class="size-4" />
                         </template>
@@ -424,6 +520,8 @@
                     <UiBox
                         v-if="preflight.weather.forecast && preflight.weather.forecast.length > 0"
                         :title="$t('preflightForecast')"
+                        type="neutral"
+                        collapsible
                         :help="$t('preflightForecastHelp')"
                     >
                         <template #title>
@@ -432,7 +530,7 @@
                         <UTable
                             :data="preflight.weather.forecast"
                             :columns="forecastColumns"
-                            :meta="{ class: { tr: (row) => getForecastRowClass(row.original) } }"
+                            :meta="forecastTableMeta"
                             :ui="{ th: 'text-xs', td: 'border-none py-0.5 text-xs' }"
                         >
                             <template #date-cell="{ row }">
@@ -459,9 +557,9 @@
                             <template #precipProbability-cell="{ row }">
                                 <span
                                     :class="
-                                        row.original.precipProbability > 50
+                                        (row.original.precipProbability ?? 0) > 50
                                             ? 'status-warning'
-                                            : row.original.precipProbability > 20
+                                            : (row.original.precipProbability ?? 0) > 20
                                               ? 'status-moderate'
                                               : ''
                                     "
@@ -481,7 +579,12 @@
                 <!-- Right Column: Solar, GNSS, Airspace -->
                 <div class="flex flex-col gap-4 md:col-span-2">
                     <!-- Solar Activity -->
-                    <UiBox :title="$t('preflightSolarActivity')" :help="$t('preflightSolarHelp')">
+                    <UiBox
+                        :title="$t('preflightSolarActivity')"
+                        type="neutral"
+                        collapsible
+                        :help="$t('preflightSolarHelp')"
+                    >
                         <template #title>
                             <UIcon name="i-lucide-sun" class="size-4" />
                         </template>
@@ -538,7 +641,7 @@
                     </UiBox>
 
                     <!-- GNSS Info -->
-                    <UiBox :title="$t('preflightGNSS')" :help="$t('preflightGNSSHelp')">
+                    <UiBox :title="$t('preflightGNSS')" type="neutral" collapsible :help="$t('preflightGNSSHelp')">
                         <template #title>
                             <UIcon name="i-lucide-satellite" class="size-4" />
                         </template>
@@ -565,7 +668,7 @@
                     </UiBox>
 
                     <!-- Airspace / No-Fly Zones -->
-                    <UiBox :title="$t('preflightAirspace')">
+                    <UiBox :title="$t('preflightAirspace')" type="neutral" collapsible>
                         <template #title>
                             <UIcon name="i-lucide-circle-off" class="size-4" />
                         </template>
@@ -610,11 +713,165 @@
                                     {{ $t("preflightNOTAMsEU") }}
                                 </a>
                             </div>
+
+                            <!-- NOTAM Settings -->
+                            <details class="notam-settings">
+                                <summary><em class="fas fa-cog"></em> {{ $t("preflightNotamSettings") }}</summary>
+                                <div class="notam-settings-body">
+                                    <div class="notam-setting-row">
+                                        <label class="notam-setting-label">{{ $t("preflightNotamProvider") }}</label>
+                                        <USelect
+                                            v-model="notamProvider"
+                                            :items="notamProviderOptions"
+                                            class="notam-setting-select"
+                                            @update:model-value="onNotamSettingChange"
+                                        />
+                                    </div>
+                                    <div v-if="notamProvider === 'faa'" class="notam-setting-row">
+                                        <label class="notam-setting-label">{{
+                                            $t("preflightNotamFaaApiKeyLabel")
+                                        }}</label>
+                                        <input
+                                            v-model="preflight.notamSettings.faaApiKey"
+                                            type="password"
+                                            autocomplete="new-password"
+                                            class="notam-setting-input"
+                                            :aria-label="$t('preflightNotamFaaApiKeyLabel')"
+                                            @change="onNotamSettingChange"
+                                        />
+                                    </div>
+                                    <div v-if="notamProvider === 'openaip'" class="notam-setting-row">
+                                        <label class="notam-setting-label">{{
+                                            $t("preflightNotamOpenAipApiKeyLabel")
+                                        }}</label>
+                                        <input
+                                            v-model="preflight.notamSettings.openAipApiKey"
+                                            type="password"
+                                            autocomplete="new-password"
+                                            class="notam-setting-input"
+                                            :aria-label="$t('preflightNotamOpenAipApiKeyLabel')"
+                                            @change="onNotamSettingChange"
+                                        />
+                                    </div>
+                                    <div class="notam-setting-row">
+                                        <label class="notam-setting-label">{{ $t("preflightNotamRadius") }}</label>
+                                        <div class="notam-radius-group">
+                                            <input
+                                                v-model.number="preflight.notamSettings.radius"
+                                                type="number"
+                                                min="1"
+                                                max="500"
+                                                class="notam-radius-input"
+                                                :aria-label="$t('preflightNotamRadius')"
+                                                @change="onNotamSettingChange"
+                                            />
+                                            <USelect
+                                                v-model="preflight.notamSettings.radiusUnit"
+                                                :items="notamRadiusUnitOptions"
+                                                class="notam-radius-unit"
+                                                @update:model-value="onNotamSettingChange"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <!-- Privacy note -->
+                            <p v-if="notamProvider" class="notam-privacy-note">
+                                <em class="fas fa-info-circle"></em> {{ $t("preflightNotamPrivacyNote") }}
+                            </p>
+
+                            <!-- NOTAM data panel -->
+                            <UiBox v-if="notamProvider && notamNeedsApiKey" highlight class="mt-2">
+                                <p>{{ $t("preflightNotamApiKeyRequired") }}</p>
+                            </UiBox>
+                            <div v-else-if="notamProvider && preflight.location.latitude !== null" class="notam-panel">
+                                <div v-if="preflight.notams.loading" class="notam-loading">
+                                    <em class="fas fa-spinner fa-spin"></em> {{ $t("preflightNotamLoading") }}
+                                </div>
+                                <div v-else-if="preflight.notams.error" class="notam-error">
+                                    <em class="fas fa-exclamation-circle"></em>
+                                    {{ $t("preflightNotamFetchError") }}: {{ preflight.notams.error }}
+                                </div>
+                                <div v-else-if="preflight.notams.items.length === 0" class="notam-empty">
+                                    {{ $t("preflightNotamEmpty") }}
+                                </div>
+                                <div v-else class="notam-list">
+                                    <div
+                                        v-for="item in preflight.notams.items"
+                                        :key="item.id + ':' + item.source"
+                                        class="notam-card"
+                                        :class="getNotamCardClass(item)"
+                                    >
+                                        <div class="notam-card-header">
+                                            <span class="notam-id">{{ item.id }}</span>
+                                            <span class="notam-type-badge" :class="getNotamTypeBadgeClass(item.type)">
+                                                {{ getNotamTypeLabel(item.type) }}
+                                            </span>
+                                            <span
+                                                v-if="getNotamCardClass(item) !== 'notam-card-future'"
+                                                class="notam-status-badge"
+                                                :class="getNotamStatusBadgeClass(item)"
+                                            >
+                                                {{ getNotamStatusLabel(item) }}
+                                            </span>
+                                            <span class="notam-location">{{ item.location }}</span>
+                                        </div>
+                                        <div class="notam-card-times">
+                                            <span>
+                                                {{ formatNotamTime(item.startTime) }}
+                                                <template v-if="item.isPermanent">
+                                                    — {{ $t("preflightNotamPermanent") }}</template
+                                                >
+                                                <template v-else-if="item.endTime">
+                                                    — {{ formatNotamTime(item.endTime) }}</template
+                                                >
+                                            </span>
+                                        </div>
+                                        <div v-if="item.lowerAlt || item.upperAlt" class="notam-card-alt">
+                                            <template v-if="item.lowerAlt">
+                                                {{ $t("preflightNotamAltFrom") }}: {{ item.lowerAlt }}
+                                            </template>
+                                            <template v-if="item.upperAlt">
+                                                &nbsp;{{ $t("preflightNotamAltTo") }}: {{ item.upperAlt }}
+                                            </template>
+                                        </div>
+                                        <div class="notam-card-body">
+                                            <span v-if="!expandedNotams.has(item.id + ':' + item.source)">
+                                                {{ (item.body ?? "").slice(0, 160)
+                                                }}<template v-if="(item.body ?? '').length > 160">…</template>
+                                            </span>
+                                            <span v-else>{{ item.body ?? "" }}</span>
+                                            <a
+                                                v-if="(item.body ?? '').length > 160"
+                                                href="#"
+                                                class="notam-expand-link"
+                                                @click.prevent="toggleNotamExpand(item)"
+                                            >
+                                                {{
+                                                    expandedNotams.has(item.id + ":" + item.source)
+                                                        ? $t("preflightNotamShowLess")
+                                                        : $t("preflightNotamShowMore")
+                                                }}
+                                            </a>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div v-if="preflight.notams.lastFetched" class="notam-timestamp">
+                                    {{ $t("preflightNotamLastFetched") }}:
+                                    {{
+                                        preflight.notams.lastFetched.toLocaleTimeString([], {
+                                            hour: "2-digit",
+                                            minute: "2-digit",
+                                        })
+                                    }}
+                                </div>
+                            </div>
                         </div>
                     </UiBox>
 
                     <!-- Map -->
-                    <UiBox :title="$t('preflightMap')" class="preflight-map-box">
+                    <UiBox :title="$t('preflightMap')" type="neutral" collapsible class="preflight-map-box">
                         <template #title>
                             <UIcon name="i-lucide-map-pinned" class="size-4" />
                         </template>
@@ -671,21 +928,37 @@
     </BaseTab>
 </template>
 
-<script>
-import { defineComponent, reactive, ref, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
+<script lang="ts">
+import {
+    defineComponent,
+    reactive,
+    ref,
+    computed,
+    toRef,
+    onMounted,
+    onUnmounted,
+    nextTick,
+    watch,
+    type Ref,
+} from "vue";
 import BaseTab from "./BaseTab.vue";
 import WikiButton from "../elements/WikiButton.vue";
 import UiBox from "../elements/UiBox.vue";
-import GUI from "../../js/gui";
 import { i18n } from "@/js/localization";
-import { usePreflight } from "@/composables/usePreflight";
-import { initMap } from "../../js/utils/map";
+import { usePreflight, type ForecastDay, type Reading } from "@/composables/usePreflight";
+import { useFlightWindow } from "@/composables/useFlightWindow";
+import type { LightWindow } from "@/js/utils/flightWindow";
+import { useMapViewport } from "@/composables/useMapViewport";
+import { getNotamStatus, type NotamItem, type NotamStatus } from "@/js/notam/index";
+import { initMap, type MapLayer } from "../../js/utils/map";
 import { fromLonLat } from "ol/proj";
 
-function getWeatherEmoji(code) {
-    if (code === 0) {
+function getWeatherEmoji(weatherCode: number | null): string {
+    if (weatherCode === 0) {
         return "\u2600";
     }
+    // A missing forecast code (null) compares as 0 below, as it always has.
+    const code = Number(weatherCode);
     if (code <= 3) {
         return "\u26C5";
     }
@@ -710,8 +983,8 @@ function getWeatherEmoji(code) {
     return "\u26A1";
 }
 
-function getStormClass(level) {
-    const num = Number.parseInt(level) || 0;
+function getStormClass(level: string): string {
+    const num = Number.parseInt(level, 10) || 0;
     if (num === 0) {
         return "status-good";
     }
@@ -724,7 +997,7 @@ function getStormClass(level) {
     return "status-danger";
 }
 
-function getGnssKpClass(kp) {
+function getGnssKpClass(kp: number): string {
     if (kp <= 3) {
         return "status-good";
     }
@@ -734,7 +1007,7 @@ function getGnssKpClass(kp) {
     return "status-danger";
 }
 
-function getGnssKpLabel(kp) {
+function getGnssKpLabel(kp: number): string {
     if (kp <= 3) {
         return i18n.getMessage("preflightKpMinimal");
     }
@@ -744,30 +1017,31 @@ function getGnssKpLabel(kp) {
     return i18n.getMessage("preflightKpSevere");
 }
 
-function formatVisibility(vis) {
+function formatVisibility(vis: number): string {
     if (vis >= 1000) {
         return `${(vis / 1000).toFixed(1)} km`;
     }
     return `${vis} m`;
 }
 
-function formatDuration(seconds) {
-    if (!seconds) {
+function formatDuration(seconds: number | null): string {
+    if (seconds === null || !Number.isFinite(seconds)) {
         return "-";
     }
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
+    const minutes = Math.round(seconds / 60);
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
     return `${h}h ${m}m`;
 }
 
-function toFahrenheit(celsius) {
+function toFahrenheit(celsius: number | null | undefined): string {
     if (celsius === null || celsius === undefined) {
         return "-";
     }
     return ((celsius * 9) / 5 + 32).toFixed(1);
 }
 
-function formatForecastDay(dateStr) {
+function formatForecastDay(dateStr: string | null): string {
     if (!dateStr) {
         return "-";
     }
@@ -775,7 +1049,7 @@ function formatForecastDay(dateStr) {
     return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
 }
 
-function getForecastRowClass(day) {
+function getForecastRowClass(day: ForecastDay): string {
     const wind = Math.max(day.windMax || 0, day.gustsMax || 0);
     const precip = day.precipProbability || 0;
     if (wind >= 14 || precip > 80) {
@@ -790,6 +1064,19 @@ function getForecastRowClass(day) {
     return "";
 }
 
+function formatNotamTime(dt: Date | null): string {
+    if (!dt) {
+        return "-";
+    }
+    return dt.toLocaleString([], {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZoneName: "short",
+    });
+}
+
 export default defineComponent({
     name: "PreflightTab",
     components: {
@@ -799,17 +1086,86 @@ export default defineComponent({
     },
     setup() {
         const preflight = reactive(usePreflight());
-        const mapRef = ref(null);
-        const mapContainerRef = ref(null);
-        const mapInstance = ref(null);
-        const activeLayer = ref("street");
-        const isFullscreen = ref(false);
+        const {
+            flightWindow,
+            selectKind,
+            now,
+            selectedLightKind,
+            activeLightWindow,
+            activeLightWindows,
+            daylightHighlights,
+            displayLightWindow,
+            lightPosition,
+            lightWidth,
+            formatLightTime,
+        } = useFlightWindow(preflight.location, toRef(preflight.weather, "timezone"));
+        watch(
+            () => flightWindow.value?.date,
+            (date, previous) => {
+                if (
+                    date &&
+                    previous &&
+                    date !== previous &&
+                    preflight.location.latitude !== null &&
+                    preflight.location.longitude !== null
+                ) {
+                    void preflight.fetchWeather(preflight.location.latitude, preflight.location.longitude);
+                }
+            },
+        );
+        const lightLegend: { kind: LightWindow["kind"]; label: string }[] = [
+            { kind: "night", label: "preflightTimelineNight" },
+            { kind: "blue", label: "preflightBlueHour" },
+            { kind: "golden", label: "preflightGoldenHour" },
+            { kind: "day", label: "preflightDaylight" },
+        ];
+        const lightWindowLabels: Record<LightWindow["kind"], string> = {
+            night: "preflightTimelineNight",
+            blue: "preflightBlueHour",
+            golden: "preflightGoldenHour",
+            day: "preflightDaylight",
+        };
+        const lightWindowKindLabel = (kind: LightWindow["kind"]) => i18n.getMessage(lightWindowLabels[kind]);
+        const lightWindowLabel = (period: LightWindow) =>
+            [period.phase ? i18n.getMessage(period.phase) : "", lightWindowKindLabel(period.kind)]
+                .filter(Boolean)
+                .join(" · ");
+        const lightWindowDescription = (period: LightWindow) =>
+            `${lightWindowLabel(period)}, ${formatLightTime(period.start)} – ${formatLightTime(period.end)}`;
+        const civilTwilightRange = computed(
+            () =>
+                flightWindow.value?.civilTwilight
+                    .map((window) => `${formatLightTime(window.start)} – ${formatLightTime(window.end)}`)
+                    .join(", ") || "-",
+        );
+        const sunLabelsOverlap = computed(() => {
+            const window = flightWindow.value;
+            return (
+                window?.sunEvents.some(
+                    (event, index, events) =>
+                        index > 0 && event.time - events[index - 1].time < (window.end - window.start) * 0.2,
+                ) ?? false
+            );
+        });
+
+        const mapRef = ref<HTMLElement | null>(null);
+        const mapContainerRef = ref<HTMLElement | null>(null);
+        // Typed as the OpenLayers objects themselves: ref() wraps them in a reactive proxy, whose
+        // UnwrapRef type strips the private members OL signatures such as setStyle() require.
+        const mapInstance: Ref<ReturnType<typeof initMap> | null> = ref(null);
+        const {
+            isFullscreen,
+            toggleFullscreen,
+            observeContainer,
+            teardown: teardownMapViewport,
+        } = useMapViewport(mapContainerRef, () => mapInstance.value?.map);
+        const activeLayer = ref<MapLayer>("street");
         const detectingLocation = ref(false);
-        const locationError = ref(null);
+        const locationError = ref<string | null>(null);
         const manualLat = ref("");
         const manualLon = ref("");
         const selectedSavedIndex = ref(-1);
-        const locationEditMode = ref(null);
+        const locationEditMode = ref<"save" | "rename" | null>(null);
         const saveLocationLabel = ref("");
 
         const hourlyColumns = computed(() => [
@@ -829,6 +1185,10 @@ export default defineComponent({
             { accessorKey: "gustsMax", header: i18n.getMessage("preflightGusts") },
             { accessorKey: "precipProbability", header: i18n.getMessage("preflightRainProb") },
         ]);
+
+        const forecastTableMeta = {
+            class: { tr: (row: { original: ForecastDay }) => getForecastRowClass(row.original) },
+        };
 
         const savedLocationOptions = computed(() => {
             return preflight.savedLocations.map((loc, idx) => ({
@@ -871,6 +1231,15 @@ export default defineComponent({
                 { key: "cloudCover", label: i18n.getMessage("preflightCloudCover"), value: `${c.cloudCover}%` },
                 { key: "humidity", label: i18n.getMessage("preflightHumidity"), value: `${c.humidity}%` },
                 { key: "feelsLike", label: i18n.getMessage("preflightFeelsLike") },
+                ...(preflight.weather.daily
+                    ? [
+                          {
+                              key: "tempRange",
+                              label: i18n.getMessage("preflightTempRange"),
+                              value: `${preflight.weather.daily.temperatureMin ?? "-"}° / ${preflight.weather.daily.temperatureMax ?? "-"}°C`,
+                          },
+                      ]
+                    : []),
                 { key: "pressure", label: i18n.getMessage("preflightPressure"), value: `${c.pressure} hPa` },
                 {
                     key: "batteryRisk",
@@ -925,10 +1294,14 @@ export default defineComponent({
 
         const gnssInfoData = computed(() => {
             const loc = preflight.location;
-            const rows = [
+            // Latitude and longitude are always set together.
+            const rows: { label: string; value: string; valueClass?: string }[] = [
                 {
                     label: i18n.getMessage("preflightCoordinates"),
-                    value: loc.latitude !== null ? `${loc.latitude.toFixed(4)}, ${loc.longitude.toFixed(4)}` : "-",
+                    value:
+                        loc.latitude !== null && loc.longitude !== null
+                            ? `${loc.latitude.toFixed(4)}, ${loc.longitude.toFixed(4)}`
+                            : "-",
                 },
                 {
                     label: i18n.getMessage("preflightElevation"),
@@ -969,30 +1342,6 @@ export default defineComponent({
             const lat = Number.parseFloat(manualLat.value);
             const lon = Number.parseFloat(manualLon.value);
             return !Number.isNaN(lat) && !Number.isNaN(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
-        });
-
-        const civilTwilightStart = computed(() => {
-            if (!preflight.civilTwilight) {
-                return "-";
-            }
-            return preflight.civilTwilight.dawn.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-        });
-
-        const civilTwilightEnd = computed(() => {
-            if (!preflight.civilTwilight) {
-                return "-";
-            }
-            return preflight.civilTwilight.dusk.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-        });
-
-        const civilTwilightStatus = computed(() => {
-            if (!preflight.civilTwilight) {
-                return "";
-            }
-            const now = new Date();
-            return now >= preflight.civilTwilight.dawn && now <= preflight.civilTwilight.dusk
-                ? "status-good"
-                : "status-danger";
         });
 
         const densityAltitude = computed(() => {
@@ -1048,7 +1397,7 @@ export default defineComponent({
                 await preflight.refreshAll();
                 updateMapPosition();
             } catch (err) {
-                if (err.message === preflight.IP_CONSENT_NEEDED) {
+                if (err instanceof Error && err.message === preflight.IP_CONSENT_NEEDED) {
                     showIpConsent.value = true;
                 } else {
                     locationError.value = i18n.getMessage("preflightGeolocationFailed");
@@ -1191,10 +1540,12 @@ export default defineComponent({
             }
             nextTick(() => {
                 initializeMap();
-                if (!mapInstance.value) {
+                const { latitude, longitude } = preflight.location;
+                // Re-checked: the location can be cleared before the tick runs.
+                if (!mapInstance.value || latitude === null || longitude === null) {
                     return;
                 }
-                const center = fromLonLat([preflight.location.longitude, preflight.location.latitude]);
+                const center = fromLonLat([longitude, latitude]);
                 mapInstance.value.mapView.setCenter(center);
                 mapInstance.value.iconGeometry.setCoordinates(center);
                 mapInstance.value.iconFeature.setStyle(mapInstance.value.iconStyleGPS);
@@ -1202,7 +1553,7 @@ export default defineComponent({
             });
         }
 
-        function setLayer(layerKey) {
+        function setLayer(layerKey: MapLayer) {
             if (!mapInstance.value?.layers) {
                 return;
             }
@@ -1217,56 +1568,31 @@ export default defineComponent({
             if (!mapInstance.value?.mapView) {
                 return;
             }
-            mapInstance.value.mapView.setZoom(mapInstance.value.mapView.getZoom() + 1);
+            const zoom = mapInstance.value.mapView.getZoom();
+            if (zoom !== undefined) {
+                mapInstance.value.mapView.setZoom(zoom + 1);
+            }
         }
 
         function zoomOut() {
             if (!mapInstance.value?.mapView) {
                 return;
             }
-            mapInstance.value.mapView.setZoom(mapInstance.value.mapView.getZoom() - 1);
-        }
-
-        function toggleFullscreen() {
-            const container = mapContainerRef.value;
-            if (!container) {
-                return;
-            }
-            if (!document.fullscreenElement && !document.webkitFullscreenElement && !document.msFullscreenElement) {
-                if (container.requestFullscreen) {
-                    container.requestFullscreen();
-                } else if (container.webkitRequestFullscreen) {
-                    container.webkitRequestFullscreen();
-                } else if (container.msRequestFullscreen) {
-                    container.msRequestFullscreen();
-                }
-            } else if (document.exitFullscreen) {
-                document.exitFullscreen();
-            } else if (document.webkitExitFullscreen) {
-                document.webkitExitFullscreen();
-            } else if (document.msExitFullscreen) {
-                document.msExitFullscreen();
+            const zoom = mapInstance.value.mapView.getZoom();
+            if (zoom !== undefined) {
+                mapInstance.value.mapView.setZoom(zoom - 1);
             }
         }
 
-        function handleFullscreenChange() {
-            isFullscreen.value = !!(
-                document.fullscreenElement ||
-                document.webkitFullscreenElement ||
-                document.msFullscreenElement
-            );
-            requestAnimationFrame(() => mapInstance.value?.map?.updateSize());
-        }
-
-        function getWindStatusClass(speed, gusts) {
+        function getWindStatusClass(speed: Reading, gusts: Reading) {
             return preflight.getWindStatus(speed, gusts).cssClass;
         }
 
-        function getVisStatusClass(vis) {
+        function getVisStatusClass(vis: Reading) {
             return preflight.getVisibilityStatus(vis).cssClass;
         }
 
-        function getPrecipStatusClass(precip) {
+        function getPrecipStatusClass(precip: Reading) {
             return preflight.getPrecipitationStatus(precip).cssClass;
         }
 
@@ -1296,28 +1622,138 @@ export default defineComponent({
             return i18n.getMessage("preflightGpsRescueNotRecommended");
         }
 
-        function getDewPointRiskClass(temp, dewPoint) {
+        function getDewPointRiskClass(temp: Reading, dewPoint: Reading) {
             return preflight.getDewPointRisk(temp, dewPoint).cssClass;
         }
 
-        function getDewPointRiskLabel(temp, dewPoint) {
+        function getDewPointRiskLabel(temp: Reading, dewPoint: Reading) {
             return preflight.getDewPointRisk(temp, dewPoint).label;
         }
 
-        function getUvStatusClass(uv) {
+        function getUvStatusClass(uv: Reading) {
             return preflight.getUvStatus(uv).cssClass;
         }
 
-        function getUvStatusLabel(uv) {
+        function getUvStatusLabel(uv: Reading) {
             return preflight.getUvStatus(uv).label;
         }
 
+        // ── NOTAM logic ──────────────────────────────────────────────────────────
+
+        const expandedNotams = ref(new Set<string>());
+
+        // Two-way binding for provider selector so changes propagate to notamSettings
+        const notamProvider = computed({
+            get: () => preflight.notamSettings.provider,
+            set: (val: string | null) => {
+                preflight.notamSettings.provider = val;
+            },
+        });
+
+        const notamProviderOptions = computed(() => [
+            { label: i18n.getMessage("preflightNotamProviderNone"), value: null },
+            // AviationWeather.gov excluded: /api/data/notam returns 404 — restore when a working endpoint is confirmed
+            { label: i18n.getMessage("preflightNotamProviderFaa"), value: "faa" },
+            { label: i18n.getMessage("preflightNotamProviderOpenaip"), value: "openaip" },
+        ]);
+
+        const notamRadiusUnitOptions = computed(() => [
+            { label: i18n.getMessage("preflightNotamRadiusUnitNm"), value: "NM" },
+            { label: i18n.getMessage("preflightNotamRadiusUnitKm"), value: "km" },
+        ]);
+
+        const notamNeedsApiKey = computed(() => {
+            const p = preflight.notamSettings.provider;
+            if (p === "faa") {
+                return !preflight.notamSettings.faaApiKey?.trim();
+            }
+            if (p === "openaip") {
+                return !preflight.notamSettings.openAipApiKey?.trim();
+            }
+            return false;
+        });
+
+        function onNotamSettingChange() {
+            preflight.persistNotamSettings();
+            const lat = preflight.location.latitude;
+            const lon = preflight.location.longitude;
+            if (lat !== null && lon !== null && !notamNeedsApiKey.value) {
+                preflight.fetchNotams(lat, lon);
+            }
+        }
+
+        const NOTAM_TYPE_LABELS: Record<string, string | undefined> = {
+            TFR: "preflightNotamTypeTfr",
+            SUA: "preflightNotamTypeSua",
+            SNOWTAM: "preflightNotamTypeSnow",
+            ASHTAM: "preflightNotamTypeAsh",
+            NOTAM: "preflightNotamTypeNotam",
+        };
+
+        const NOTAM_TYPE_BADGE_CLASSES: Record<string, string | undefined> = {
+            TFR: "notam-badge-tfr",
+            SUA: "notam-badge-sua",
+            SNOWTAM: "notam-badge-snow",
+            ASHTAM: "notam-badge-ash",
+            NOTAM: "notam-badge-notam",
+        };
+
+        function getNotamTypeLabel(type: string) {
+            return i18n.getMessage(NOTAM_TYPE_LABELS[type] ?? "preflightNotamTypeNotam");
+        }
+
+        function getNotamTypeBadgeClass(type: string) {
+            return NOTAM_TYPE_BADGE_CLASSES[type] ?? "notam-badge-notam";
+        }
+
+        const NOTAM_STATUS_CARD_CLASS: Record<NotamStatus, string> = {
+            active: "notam-card-active",
+            future: "notam-card-future",
+            expired: "notam-card-expired",
+        };
+
+        function getNotamCardClass(item: NotamItem) {
+            return NOTAM_STATUS_CARD_CLASS[getNotamStatus(item)];
+        }
+
+        function getNotamStatusBadgeClass(item: NotamItem) {
+            const cls = getNotamCardClass(item);
+            if (cls === "notam-card-active") {
+                return "notam-status-active";
+            }
+            if (cls === "notam-card-future") {
+                return "notam-status-future";
+            }
+            return "notam-status-expired";
+        }
+
+        function getNotamStatusLabel(item: NotamItem) {
+            const cls = getNotamCardClass(item);
+            if (cls === "notam-card-active") {
+                return i18n.getMessage("preflightNotamActiveNow");
+            }
+            if (cls === "notam-card-expired") {
+                return i18n.getMessage("preflightNotamExpired");
+            }
+            return null;
+        }
+
+        function toggleNotamExpand(item: NotamItem) {
+            const key = `${item.id}:${item.source}`;
+            const next = new Set(expandedNotams.value);
+            if (next.has(key)) {
+                next.delete(key);
+            } else {
+                next.add(key);
+            }
+            expandedNotams.value = next;
+        }
+
+        // ── End NOTAM logic ───────────────────────────────────────────────────────
+
         onMounted(() => {
-            GUI.content_ready();
-            document.addEventListener("fullscreenchange", handleFullscreenChange);
-            document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
-            document.addEventListener("MSFullscreenChange", handleFullscreenChange);
             nextTick(() => {
+                observeContainer();
                 if (preflight.location.latitude !== null) {
                     initializeMap();
                     updateMapPosition();
@@ -1326,9 +1762,7 @@ export default defineComponent({
         });
 
         onUnmounted(() => {
-            document.removeEventListener("fullscreenchange", handleFullscreenChange);
-            document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
-            document.removeEventListener("MSFullscreenChange", handleFullscreenChange);
+            teardownMapViewport();
             if (mapInstance.value?.destroy) {
                 mapInstance.value.destroy();
             }
@@ -1344,7 +1778,31 @@ export default defineComponent({
             },
         );
 
+        watch(
+            () => preflight.notams.items,
+            () => {
+                expandedNotams.value = new Set();
+            },
+        );
+
         return {
+            lightLegend,
+            flightWindow,
+            selectKind,
+            now,
+            selectedLightKind,
+            civilTwilightRange,
+            sunLabelsOverlap,
+            displayLightWindow,
+            activeLightWindow,
+            activeLightWindows,
+            daylightHighlights,
+            lightPosition,
+            lightWidth,
+            formatLightTime,
+            lightWindowLabel,
+            lightWindowKindLabel,
+            lightWindowDescription,
             preflight,
             mapRef,
             mapContainerRef,
@@ -1355,9 +1813,6 @@ export default defineComponent({
             manualLat,
             manualLon,
             isManualLocationValid,
-            civilTwilightStart,
-            civilTwilightEnd,
-            civilTwilightStatus,
             densityAltitude,
             getDensityAltStatusClass,
             airspaceExplorerLink,
@@ -1410,7 +1865,20 @@ export default defineComponent({
             getUvStatusClass,
             getUvStatusLabel,
             formatForecastDay,
-            getForecastRowClass,
+            forecastTableMeta,
+            notamProvider,
+            notamProviderOptions,
+            notamRadiusUnitOptions,
+            notamNeedsApiKey,
+            expandedNotams,
+            onNotamSettingChange,
+            getNotamTypeLabel,
+            getNotamTypeBadgeClass,
+            getNotamCardClass,
+            getNotamStatusBadgeClass,
+            getNotamStatusLabel,
+            formatNotamTime,
+            toggleNotamExpand,
         };
     },
 });
@@ -1432,7 +1900,7 @@ export default defineComponent({
                 padding: 0.35rem 0.75rem;
                 white-space: nowrap;
                 em {
-                    margin-right: 4px;
+                    margin-inline-end: 4px;
                 }
             }
         }
@@ -1475,7 +1943,7 @@ export default defineComponent({
                 a {
                     padding: 0.35rem 0.5rem;
                     em {
-                        margin-right: 0;
+                        margin-inline-end: 0;
                     }
                 }
             }
@@ -1497,7 +1965,7 @@ export default defineComponent({
             color: var(--primary-500);
             font-weight: bold;
             em {
-                margin-right: 4px;
+                margin-inline-end: 4px;
             }
             .location-source {
                 color: var(--surface-600);
@@ -1508,17 +1976,17 @@ export default defineComponent({
 
         .location-error {
             margin-top: 8px;
-            color: #e74c3c;
+            color: var(--error-500);
             em {
-                margin-right: 4px;
+                margin-inline-end: 4px;
             }
         }
 
         .ip-consent-prompt {
             margin-top: 8px;
             padding: 8px 12px;
-            background: var(--surface-200, #fff8e1);
-            border: 1px solid var(--surface-400, #ffe082);
+            background: var(--surface-200);
+            border: 1px solid var(--surface-400);
             border-radius: 4px;
             display: flex;
             align-items: center;
@@ -1527,14 +1995,14 @@ export default defineComponent({
             font-size: 12px;
 
             > em {
-                color: #b8860b;
+                color: var(--warning-700);
                 flex-shrink: 0;
             }
 
             .ip-consent-actions {
                 display: flex;
                 gap: 6px;
-                margin-left: auto;
+                margin-inline-start: auto;
             }
         }
     }
@@ -1552,20 +2020,20 @@ export default defineComponent({
         transition: background-color 0.3s;
 
         &.status-good {
-            background: linear-gradient(135deg, #1e8449, #27ae60);
-            color: #fff;
+            background: linear-gradient(135deg, var(--severity-good), var(--severity-good-light));
+            color: white;
         }
         &.status-moderate {
-            background: linear-gradient(135deg, #b7770a, #d4ac0d);
-            color: #000;
+            background: linear-gradient(135deg, var(--severity-moderate), var(--severity-moderate-light));
+            color: black;
         }
         &.status-warning {
-            background: linear-gradient(135deg, #a35309, #b7770a);
-            color: #fff;
+            background: linear-gradient(135deg, var(--severity-warning), var(--severity-moderate));
+            color: white;
         }
         &.status-danger {
-            background: linear-gradient(135deg, #922b21, #c0392b);
-            color: #fff;
+            background: linear-gradient(135deg, var(--severity-danger-dark), var(--severity-danger));
+            color: white;
         }
         &.status-unknown {
             background: var(--surface-400);
@@ -1586,7 +2054,7 @@ export default defineComponent({
         .refresh-btn {
             width: auto;
             float: none;
-            margin-left: auto;
+            margin-inline-start: auto;
             margin-bottom: 0;
             a {
                 background: rgba(0, 0, 0, 0.1);
@@ -1599,7 +2067,7 @@ export default defineComponent({
                     color: inherit;
                 }
                 em {
-                    margin-right: 4px;
+                    margin-inline-end: 4px;
                 }
             }
         }
@@ -1626,19 +2094,19 @@ export default defineComponent({
 
     /* Status classes for values — WCAG AA compliant on light backgrounds */
     .status-good {
-        color: #1e8449;
+        color: var(--severity-good);
         font-weight: bold;
     }
     .status-moderate {
-        color: #b7770a;
+        color: var(--severity-moderate);
         font-weight: bold;
     }
     .status-warning {
-        color: #a35309;
+        color: var(--severity-warning);
         font-weight: bold;
     }
     .status-danger {
-        color: #c0392b;
+        color: var(--severity-danger);
         font-weight: bold;
     }
     .status-unknown {
@@ -1677,54 +2145,316 @@ export default defineComponent({
     }
 
     /* Flight Window */
-    .flight-window-grid {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 10px;
+    .flight-window-chart {
+        width: 100%;
+        min-width: 0;
+        margin: 0;
+        border: 0;
+        padding: 8px 0 0;
+        font-variant-numeric: tabular-nums;
+    }
 
-        @media (min-width: 768px) {
-            grid-template-columns: repeat(3, 1fr);
+    .fw-detail {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 4px 12px;
+        min-height: 42px;
+        font-size: 13px;
+
+        small {
+            color: var(--surface-600);
+            font-size: 11px;
+        }
+    }
+
+    .fw-detail-ranges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+    }
+
+    .fw-sunrise-sunset {
+        position: relative;
+        height: 42px;
+    }
+
+    .fw-sun-staggered {
+        height: 76px;
+    }
+
+    .fw-light-track {
+        position: relative;
+        padding-bottom: 28px;
+    }
+
+    .fw-daylight-selection {
+        position: absolute;
+        top: 0;
+        height: 42px;
+        z-index: 1;
+        border: 2px solid var(--text);
+        pointer-events: none;
+    }
+
+    .fw-now-marker {
+        position: absolute;
+        top: 0;
+        bottom: 22px;
+        z-index: 2;
+        pointer-events: none;
+
+        &::after {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            content: "";
+            border-inline-start: 2px solid var(--text);
+            filter: drop-shadow(0 0 1px var(--surface-50));
+        }
+    }
+
+    .fw-now-label {
+        position: absolute;
+        top: 100%;
+        left: 1px;
+        transform: translateX(-50%);
+        padding-top: 2px;
+        color: var(--text);
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .fw-now-near-start .fw-now-label {
+        transform: none;
+    }
+
+    .fw-now-near-end .fw-now-label {
+        transform: translateX(-100%);
+    }
+
+    .fw-sun-label {
+        position: absolute;
+        bottom: 0;
+        transform: translateX(-50%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        font-size: 12px;
+        color: var(--text);
+
+        strong {
+            font-size: 14px;
+            font-weight: 600;
         }
 
-        .flight-window-item {
-            text-align: center;
-            padding: 8px;
-            background: var(--surface-200);
-            border-radius: 4px;
+        &::after {
+            content: "";
+            height: 10px;
+            border-inline-start: 1px solid var(--text);
+        }
+    }
 
-            .fw-label {
-                font-size: 11px;
-                color: var(--surface-600);
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-                margin-bottom: 4px;
+    .fw-sun-label-start {
+        transform: none;
+        align-items: flex-start;
+    }
+
+    .fw-sun-label-end {
+        transform: translateX(-100%);
+        align-items: flex-end;
+    }
+
+    .fw-sun-label-raised::after {
+        height: 44px;
+    }
+
+    .fw-footer-stats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 28px;
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px solid var(--surface-400);
+        font-size: 13px;
+    }
+
+    .fw-uv-index,
+    .fw-summary {
+        display: flex;
+        flex: 1 1 180px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+
+        .fw-uv-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            color: var(--surface-600);
+        }
+
+        > span {
+            color: var(--surface-600);
+        }
+
+        strong span {
+            margin-inline-start: 5px;
+            font-size: 11px;
+            font-weight: 400;
+        }
+    }
+
+    .fw-light-bar {
+        display: flex;
+        height: 42px;
+        width: 100%;
+        border-radius: 5px;
+        overflow: hidden;
+    }
+
+    .fw-period-night {
+        background: var(--surface-700);
+    }
+
+    .fw-period-blue {
+        background: var(--color-blue-500);
+    }
+
+    .fw-period-golden {
+        background: var(--primary-500);
+    }
+
+    .fw-period-day {
+        background: var(--primary-200);
+    }
+
+    .fw-light-segment {
+        flex: 0 0 auto;
+        min-width: 0;
+        padding: 0;
+        border: 0;
+        cursor: pointer;
+        color: var(--surface-950);
+        font-size: 12px;
+        transition: box-shadow 120ms ease;
+
+        .dark & {
+            color: var(--surface-50);
+        }
+
+        &.fw-active,
+        &:not(.fw-period-day):hover,
+        &:not(.fw-period-day):focus-visible {
+            box-shadow: inset 0 0 0 2px var(--text);
+            outline: none;
+        }
+    }
+
+    .fw-time-axis {
+        position: relative;
+        height: 32px;
+        color: var(--surface-600);
+        font-size: 10px;
+
+        span {
+            position: absolute;
+            top: 6px;
+            transform: translateX(-50%);
+
+            &::before {
+                position: absolute;
+                top: -7px;
+                left: 50%;
+                height: 5px;
+                content: "";
+                border-inline-start: 1px solid var(--surface-500);
             }
 
-            .fw-value {
-                font-size: 16px;
-                font-weight: bold;
+            &.fw-time-start {
+                transform: none;
+            }
 
-                .fw-sublabel {
-                    display: block;
-                    font-size: 11px;
-                    font-weight: normal;
-                    margin-top: 2px;
-                }
+            &.fw-time-end {
+                transform: translateX(-100%);
+            }
+
+            &.fw-time-start::before {
+                left: 0;
+            }
+
+            &.fw-time-end::before {
+                left: 100%;
             }
         }
+
+        .fw-time-tick-minor::before {
+            top: -5px;
+            height: 3px;
+        }
+    }
+
+    .fw-chart-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 16px;
+        font-size: 11px;
+        color: var(--surface-600);
+
+        span,
+        button {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        button {
+            min-height: 24px;
+            padding: 4px 0;
+            background: none;
+            border: 0;
+            color: inherit;
+            font: inherit;
+            cursor: pointer;
+
+            &:disabled {
+                opacity: 0.5;
+                cursor: default;
+            }
+
+            &:focus-visible {
+                outline: 1px solid var(--text);
+                outline-offset: 3px;
+            }
+        }
+
+        i {
+            width: 9px;
+            height: 9px;
+            border-radius: 2px;
+        }
+    }
+
+    .fw-chart-hint {
+        margin-inline-start: auto;
+        color: var(--surface-500);
+        min-width: 0;
     }
 
     /* Status badge (inline) */
     .status-badge {
         font-size: 11px;
-        margin-left: 6px;
+        margin-inline-start: 6px;
     }
 
     .table-note {
         font-size: 11px;
         color: var(--surface-600);
         margin-top: 4px;
-        text-align: right;
+        text-align: end;
     }
 
     /* 5-Day Forecast row highlights (applied via UTable meta.class.tr) */
@@ -1787,16 +2517,16 @@ export default defineComponent({
                     transition: width 0.5s ease;
 
                     &.status-good {
-                        background: #1e8449;
+                        background: var(--severity-good);
                     }
                     &.status-moderate {
-                        background: #b7770a;
+                        background: var(--severity-moderate);
                     }
                     &.status-warning {
-                        background: #a35309;
+                        background: var(--severity-warning);
                     }
                     &.status-danger {
-                        background: #c0392b;
+                        background: var(--severity-danger);
                     }
                 }
             }
@@ -1839,7 +2569,7 @@ export default defineComponent({
                     text-decoration: underline;
                 }
                 em {
-                    margin-right: 4px;
+                    margin-inline-end: 4px;
                     font-size: 10px;
                 }
             }
@@ -1876,10 +2606,287 @@ export default defineComponent({
                 }
 
                 em {
-                    margin-right: 8px;
+                    margin-inline-end: 8px;
                     width: 16px;
                     text-align: center;
                 }
+            }
+        }
+
+        /* NOTAM settings accordion */
+        .notam-settings {
+            margin-top: 8px;
+            font-size: 12px;
+
+            summary {
+                display: flex;
+                align-items: center;
+                padding: 8px 12px;
+                background: var(--surface-200);
+                border: 1px solid var(--surface-400);
+                border-radius: 4px;
+                color: var(--primary-500);
+                text-decoration: none;
+                font-size: 13px;
+                font-weight: bold;
+                cursor: pointer;
+                user-select: none;
+                list-style: none;
+                transition: background 0.2s;
+
+                &:hover {
+                    background: var(--surface-300);
+                }
+
+                &::-webkit-details-marker {
+                    display: none;
+                }
+
+                em {
+                    margin-inline-end: 8px;
+                    width: 16px;
+                    text-align: center;
+                }
+            }
+
+            &[open] summary {
+                border-radius: 4px 4px 0 0;
+                border-bottom: none;
+            }
+
+            .notam-settings-body {
+                padding: 10px;
+                border: 1px solid var(--surface-400);
+                border-top: none;
+                border-radius: 0 0 4px 4px;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .notam-setting-row {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .notam-setting-label {
+                flex: 0 0 auto;
+                min-width: 110px;
+                font-size: 12px;
+                color: var(--text);
+            }
+
+            .notam-setting-select {
+                flex: 1;
+                min-width: 0;
+            }
+
+            .notam-setting-input {
+                flex: 1;
+                min-width: 0;
+                padding: 4px 8px;
+                border: 1px solid var(--surface-500);
+                border-radius: 3px;
+                background: var(--surface-200);
+                color: var(--text);
+                font-size: 12px;
+            }
+
+            .notam-radius-group {
+                display: flex;
+                gap: 6px;
+                flex: 1;
+            }
+
+            .notam-radius-input {
+                width: 70px;
+                padding: 4px 8px;
+                border: 1px solid var(--surface-500);
+                border-radius: 3px;
+                background: var(--surface-200);
+                color: var(--text);
+                font-size: 12px;
+            }
+
+            .notam-radius-unit {
+                width: 80px;
+            }
+        }
+
+        /* Privacy note */
+        .notam-privacy-note {
+            margin-top: 8px;
+            font-size: 11px;
+            color: var(--surface-600);
+            background: var(--surface-100);
+            border: 1px solid var(--surface-300);
+            border-radius: 4px;
+            padding: 6px 8px;
+
+            em {
+                margin-inline-end: 4px;
+            }
+        }
+
+        /* NOTAM data panel */
+        .notam-panel {
+            margin-top: 10px;
+
+            .notam-loading,
+            .notam-empty {
+                font-size: 12px;
+                color: var(--surface-600);
+                padding: 8px 0;
+                text-align: center;
+
+                em {
+                    margin-inline-end: 6px;
+                }
+            }
+
+            .notam-error {
+                font-size: 12px;
+                color: var(--color-error-600);
+                padding: 6px 8px;
+                background: var(--color-error-50);
+                border: 1px solid var(--color-error-300);
+                border-radius: 4px;
+
+                em {
+                    margin-inline-end: 6px;
+                }
+            }
+
+            .notam-list {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                max-height: 400px;
+                overflow-y: auto;
+            }
+
+            .notam-card {
+                border: 1px solid var(--surface-400);
+                border-radius: 4px;
+                padding: 8px 10px;
+                font-size: 12px;
+                background: var(--surface-0);
+
+                &.notam-card-active {
+                    border-inline-start: 3px solid var(--color-success-500);
+                }
+
+                &.notam-card-future {
+                    border-inline-start: 3px solid var(--color-warning-500);
+                }
+
+                &.notam-card-expired {
+                    border-inline-start: 3px solid var(--surface-400);
+                    opacity: 0.6;
+                }
+            }
+
+            .notam-card-header {
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 6px;
+                margin-bottom: 4px;
+            }
+
+            .notam-id {
+                font-weight: 600;
+                font-size: 12px;
+            }
+
+            .notam-location {
+                color: var(--surface-600);
+                font-size: 11px;
+                margin-inline-start: auto;
+            }
+
+            .notam-type-badge,
+            .notam-status-badge {
+                font-size: 10px;
+                font-weight: 600;
+                padding: 1px 6px;
+                border-radius: 3px;
+                text-transform: uppercase;
+            }
+
+            .notam-badge-notam {
+                background: var(--color-info-100);
+                color: var(--color-info-800);
+            }
+
+            .notam-badge-tfr {
+                background: var(--color-error-100);
+                color: var(--color-error-800);
+            }
+
+            .notam-badge-sua {
+                background: var(--color-warning-100);
+                color: var(--color-warning-800);
+            }
+
+            .notam-badge-snow {
+                background: var(--surface-100);
+                color: var(--surface-700);
+            }
+
+            .notam-badge-ash {
+                background: var(--surface-200);
+                color: var(--surface-700);
+            }
+
+            .notam-status-active {
+                background: var(--color-success-100);
+                color: var(--color-success-800);
+            }
+
+            .notam-status-future {
+                background: var(--color-warning-100);
+                color: var(--color-warning-800);
+            }
+
+            .notam-status-expired {
+                background: var(--surface-100);
+                color: var(--surface-600);
+            }
+
+            .notam-card-times {
+                font-size: 11px;
+                color: var(--surface-600);
+                margin-bottom: 3px;
+            }
+
+            .notam-card-alt {
+                font-size: 11px;
+                color: var(--surface-600);
+                margin-bottom: 3px;
+            }
+
+            .notam-card-body {
+                font-size: 12px;
+                line-height: 1.4;
+                word-break: break-word;
+            }
+
+            .notam-expand-link {
+                display: inline-block;
+                margin-inline-start: 4px;
+                font-size: 11px;
+                color: var(--primary-500);
+                text-decoration: underline;
+                cursor: pointer;
+            }
+
+            .notam-timestamp {
+                margin-top: 6px;
+                font-size: 11px;
+                color: var(--surface-500);
+                text-align: end;
             }
         }
     }
@@ -1905,7 +2912,7 @@ export default defineComponent({
         .controls {
             position: absolute;
             top: 8px;
-            right: 8px;
+            inset-inline-end: 8px;
             display: flex;
             flex-direction: column;
             gap: 2px;
@@ -1924,12 +2931,12 @@ export default defineComponent({
 
                 &:hover {
                     background: var(--primary-500);
-                    color: #fff;
+                    color: black;
                 }
 
                 &.active {
                     background: var(--primary-500);
-                    color: #fff;
+                    color: black;
                 }
             }
         }
@@ -1946,12 +2953,12 @@ export default defineComponent({
             .controls {
                 position: fixed;
                 bottom: 0;
-                left: 0;
+                inset-inline-start: 0;
                 width: 100vw !important;
                 z-index: 1000;
                 flex-direction: row;
                 top: auto;
-                right: auto;
+                inset-inline-end: auto;
                 justify-content: center;
                 gap: 4px;
                 padding: 4px;
@@ -1962,10 +2969,10 @@ export default defineComponent({
 
     /* Misc */
     .error-message {
-        color: #e74c3c;
+        color: var(--error-500);
         padding: 8px;
         em {
-            margin-right: 4px;
+            margin-inline-end: 4px;
         }
     }
 

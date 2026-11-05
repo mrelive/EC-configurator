@@ -1,53 +1,48 @@
 <template>
-    <UApp :tooltip="{ delayDuration: 100 }" portal="#main-wrapper">
+    <UApp :locale="uiLocale" :tooltip="{ delayDuration: 100 }" portal="#main-wrapper">
         <div class="app-wrapper">
             <div id="background" v-if="isMobileSidebarOpen" aria-hidden="true" @click="isRevealed = false"></div>
             <div id="side_menu_swipe"></div>
-            <div class="mobile-topbar" :class="{ 'mobile-topbar--hidden': topbarHidden }">
-                <UButton
-                    id="menu_btn"
-                    icon="i-lucide-menu"
-                    color="neutral"
-                    variant="soft"
-                    size="lg"
-                    square
-                    :aria-label="$t('openSidebarMenu')"
-                    @click="isRevealed = !isRevealed"
-                />
+            <div v-if="isLandingTab" class="mobile-topbar" :class="{ 'mobile-topbar--hidden': topbarHidden }">
                 <div class="mobile-topbar__logo" :title="logoTooltip" aria-hidden="true"></div>
-                <div class="mobile-topbar__spacer" aria-hidden="true"></div>
             </div>
-            <div id="tab-content-container">
+            <UserSession is-compact class="floating-account" />
+            <div id="tab-content-container" :class="{ 'has-mobile-topbar': isLandingTab }">
                 <div class="tab_container" :class="{ reveal: isMobileSidebarOpen }">
                     <betaflight-logo
-                        :configurator-version="CONFIGURATOR.getDisplayVersion()"
-                        :firmware-version="FC.CONFIG.flightControllerVersion"
-                        :firmware-id="FC.CONFIG.flightControllerIdentifier"
-                        :hardware-id="FC.CONFIG.hardwareName"
+                        :configurator-version="appInfo.displayVersion"
+                        :firmware-version="fcStore.config.flightControllerVersion"
+                        :firmware-id="fcStore.config.flightControllerIdentifier"
+                        :hardware-id="fcStore.config.hardwareName"
                     ></betaflight-logo>
-                    <ConnectButton />
+                    <Teleport to=".floating-connect" :disabled="!useFloatingChrome">
+                        <ConnectButton />
+                    </Teleport>
                     <Sidebar />
                     <div class="clear-both"></div>
                 </div>
                 <div id="content" @scroll.passive="onContentScroll">
-                    <component
-                        :is="activeTabComponent"
-                        v-if="activeTabComponent"
-                        :key="vueTabState.activeTabKey"
-                        ref="activeTabInstance"
-                    />
+                    <keep-alive :include="keptAliveTabs">
+                        <component
+                            :is="activeTabComponent"
+                            v-if="activeTabComponent"
+                            :key="activeTabKey"
+                            ref="activeTabInstance"
+                        />
+                    </keep-alive>
                 </div>
             </div>
             <status-bar
                 :port-usage-down="PortUsage.port_usage_down"
                 :port-usage-up="PortUsage.port_usage_up"
                 :connection-timestamp="CONNECTION.timestamp"
-                :packet-error="MSP.packet_error"
-                :cycle-time="FC.CONFIG.cycleTime"
-                :cpu-load="FC.CONFIG.cpuload"
-                :configurator-version="CONFIGURATOR.getDisplayVersion()"
-                :firmware-version="FC.CONFIG.flightControllerVersion"
-                :firmware-target="FC.CONFIG.hardwareName"
+                :packet-error="connectionStore.packetErrors"
+                :cycle-time="fcStore.config.cycleTime"
+                :cpu-load="fcStore.config.cpuload"
+                :cpu-temperature="fcStore.config.cpuTemp"
+                :configurator-version="appInfo.displayVersion"
+                :firmware-version="fcStore.config.flightControllerVersion"
+                :firmware-target="fcStore.config.hardwareName"
             ></status-bar>
             <div id="cache">
                 <div class="data-loading">
@@ -56,28 +51,31 @@
             </div>
         </div>
         <GlobalDialogs />
+        <LogPanel />
     </UApp>
 </template>
 
-<script setup>
+<script setup lang="ts">
+import { isAndroid } from "@/js/utils/checkCompatibility";
 import { computed, nextTick, provide, reactive, ref, shallowRef, watch } from "vue";
-import { useMediaQuery } from "@vueuse/core";
-import ConnectButton from "./components/port-picker/ConnectButton.vue";
+import { onKeyStroke, useMediaQuery } from "@vueuse/core";
+import ConnectButton from "./components/device-picker/ConnectButton.vue";
 import GlobalDialogs from "./components/dialogs/GlobalDialogs.vue";
+import LogPanel from "./components/log/LogPanel.vue";
 import Sidebar from "./components/sidebar/Sidebar.vue";
-import FCModule from "./js/fc.js";
-import MSPModule from "./js/msp.js";
-import PortUsageModule from "./js/port_usage.js";
-import CONFIGURATORModule from "./js/data_storage.js";
-import GUI from "./js/gui.js";
+import PortUsageModule from "./js/port_usage";
 import { i18n } from "./js/localization";
+import { useUiLocale } from "./composables/useUiLocale";
+import { useFlightControllerStore } from "./stores/fc";
+import { useConnectionStore } from "./stores/connection";
+import { useAppInfoStore } from "./stores/appInfo";
 import {
     completeVueTabMount,
     tabAdapterRegistration,
     TAB_ADAPTER_REGISTRATION_KEY,
     vueTabState,
 } from "./js/vue_tab_mounter.js";
-import { VueTabComponents } from "./js/vue_tab_registry.js";
+import { VueTabComponents } from "./js/vue_tab_registry";
 
 // Tests or unusual entry points may run without init.js; init.js overwrites this synchronously after its model exists.
 if (!window.vm) {
@@ -107,11 +105,15 @@ function currentVm() {
     return syncedVm.value;
 }
 
-const CONFIGURATOR = computed(() => currentVm()?.CONFIGURATOR ?? CONFIGURATORModule);
-const FC = computed(() => currentVm()?.FC ?? FCModule);
-const MSP = computed(() => currentVm()?.MSP ?? MSPModule);
+const fcStore = useFlightControllerStore();
+const connectionStore = useConnectionStore();
+const appInfo = useAppInfoStore();
 const PortUsage = computed(() => currentVm()?.PortUsage ?? PortUsageModule);
 const CONNECTION = computed(() => currentVm()?.CONNECTION ?? connectionFallback);
+
+// Nuxt UI needs its own locale to pick up the text direction and translate its built-in
+// strings; without it every element renders LTR and in English (see issue #5482).
+const uiLocale = useUiLocale();
 
 const activeTabInstance = ref(null);
 
@@ -123,6 +125,14 @@ const isCompactBreakpoint = useMediaQuery(
 const isMobileSidebarOpen = computed(() => isCompactBreakpoint.value && isRevealed.value);
 const isSidebarExpanded = computed(() => !sidebarNarrow.value || isRevealed.value);
 
+// Escape closes the open drawer, the keyboard equivalent of a click on the backdrop. The backdrop
+// itself cannot take focus, so the listener is on the window; onKeyStroke removes it on unmount.
+onKeyStroke("Escape", () => {
+    if (isMobileSidebarOpen.value) {
+        isRevealed.value = false;
+    }
+});
+
 // Auto-close the drawer when leaving the mobile drawer breakpoint.
 watch(isCompactBreakpoint, (compact) => {
     if (!compact) {
@@ -130,12 +140,21 @@ watch(isCompactBreakpoint, (compact) => {
     }
 });
 
+// The branded top bar is a landing-page affordance. Every other tab reaches the drawer from the
+// hamburger in the status bar instead, so the bar only costs vertical space there.
+const isLandingTab = computed(() => vueTabState.activeTabName === "landing");
+
+// Connecting is the app's primary action and it lives in the drawer, which the phone shell no
+// longer opens. Teleport it into the floating chrome there, and leave it in place everywhere else.
+const isAppShell = isAndroid();
+const useFloatingChrome = computed(() => isAppShell && isCompactBreakpoint.value);
+
 const topbarHidden = ref(false);
 let lastScrollTop = 0;
 const scrollThreshold = 6;
 
-function onContentScroll(event) {
-    const current = event.target.scrollTop;
+function onContentScroll(event: Event) {
+    const current = (event.target as HTMLElement).scrollTop;
     if (current <= 0) {
         topbarHidden.value = false;
         lastScrollTop = 0;
@@ -158,9 +177,18 @@ watch(isRevealed, (revealed) => {
     }
 });
 
+// Scrolling any tab sets the hidden flag, and the landing page may be too short to
+// scroll it back, so entering the landing tab has to reset it itself.
+watch(isLandingTab, (isLanding) => {
+    if (isLanding) {
+        topbarHidden.value = false;
+        lastScrollTop = 0;
+    }
+});
+
 const logoTooltip = computed(() => {
-    const lines = [`${i18n.getMessage("versionLabelConfigurator")}: ${CONFIGURATOR.value.getDisplayVersion()}`];
-    const cfg = FC.value.CONFIG ?? {};
+    const lines = [`${i18n.getMessage("versionLabelConfigurator")}: ${appInfo.displayVersion}`];
+    const cfg = fcStore.config ?? {};
     if (cfg.flightControllerVersion && cfg.flightControllerIdentifier) {
         lines.push(
             `${i18n.getMessage("versionLabelFirmware")}: ${cfg.flightControllerVersion} ${cfg.flightControllerIdentifier}`,
@@ -172,15 +200,32 @@ const logoTooltip = computed(() => {
     return lines.join("\n");
 });
 
+provide("toggleMobileSidebar", () => {
+    isRevealed.value = !isRevealed.value;
+});
 provide("sidebarExpanded", isSidebarExpanded);
+provide("closeMobileSidebar", () => {
+    if (isCompactBreakpoint.value) {
+        isRevealed.value = false;
+    }
+});
 
 const activeTabComponent = computed(() => {
     const tabName = vueTabState.activeTabName;
-    return tabName ? (VueTabComponents[tabName] ?? null) : null;
+    return tabName ? (VueTabComponents[tabName as keyof typeof VueTabComponents] ?? null) : null;
 });
 
+// Tabs that keep their state (and heavy resources) alive across switches rather than being torn
+// down. Matched by component name.
+const keptAliveTabs = ["BlackboxViewerTab"];
+
+// The mounter bumps activeTabKey on every switch to force a fresh instance. Kept-alive tabs need
+// a stable key instead, or keep-alive caches by an ever-changing key and never restores.
+const activeTabKey = computed(() =>
+    vueTabState.activeTabName === "blackbox_viewer" ? "blackbox_viewer" : vueTabState.activeTabKey,
+);
+
 provide("betaflightModel", currentVm());
-provide("gui", GUI);
 provide(TAB_ADAPTER_REGISTRATION_KEY, tabAdapterRegistration);
 
 watch(
@@ -197,8 +242,8 @@ watch(
 );
 </script>
 
-<style scoped>
-@keyframes spin {
+<style lang="less">
+@keyframes app-spin {
     0% {
         transform: rotate(0deg);
     }
@@ -222,23 +267,61 @@ watch(
     display: none;
 }
 
-/* Mobile top bar — hamburger left, centred wide logo, auto-hides on scroll down. */
+/* Mobile top bar — the landing page's branding, auto-hides on scroll down. The drawer is
+   reached from the status bar, which is present on every tab.
+   The bar grows by the safe-area inset and pads its contents down by the same amount, so the
+   controls sit below the Android/iOS status bar with the content box unchanged. */
 .mobile-topbar {
     display: none;
     position: fixed;
     top: 0;
-    left: 0;
-    right: 0;
+    inset-inline-start: 0;
+    inset-inline-end: 0;
     z-index: 2001;
-    height: 3rem;
-    padding: 0.25rem 0.5rem;
+    /* Explicit, not inherited from the Tailwind reset: the height below is an outer height, and
+       #content's matching padding-top depends on it staying one. */
+    box-sizing: border-box;
+    height: calc(3rem + var(--bf-inset-top));
+    padding: calc(0.25rem + var(--bf-inset-top)) 0.5rem 0.25rem;
     align-items: center;
     gap: 0.5rem;
     background-color: var(--surface-100);
     border-bottom: 1px solid var(--surface-200);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    box-shadow: var(--shadow-chrome-bar);
     transition: transform 0.25s ease;
 }
+/* Compact only: a round, always-reachable account button over the content, matching the
+   floating status bar at the other end of the screen. */
+.floating-connect {
+    display: none;
+    position: fixed;
+    top: calc(0.5rem + var(--bf-inset-top));
+    right: 0.75rem;
+    z-index: 2002;
+    max-width: 62vw;
+    border-radius: 9999px;
+    border: 1px solid var(--surface-200);
+    background-color: color-mix(in srgb, var(--surface-100) 82%, transparent);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    box-shadow: var(--shadow-chrome-floating);
+    overflow: hidden;
+}
+
+.floating-account {
+    display: none;
+    position: fixed;
+    top: calc(0.5rem + var(--bf-inset-top));
+    left: 0.75rem;
+    z-index: 2002;
+    border-radius: 9999px;
+    border: 1px solid var(--surface-200);
+    background-color: color-mix(in srgb, var(--surface-100) 82%, transparent);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    box-shadow: var(--shadow-chrome-floating);
+}
+
 .mobile-topbar--hidden {
     transform: translateY(-100%);
 }
@@ -254,18 +337,22 @@ watch(
 .dark .mobile-topbar__logo {
     background-image: url(./images/echo_corp_logo.png);
 }
-.mobile-topbar__spacer {
-    width: 2.5rem;
-    flex-shrink: 0;
-}
-
-@media all and (max-width: 575px), all and (max-width: 950px) and (max-height: 500px) and (orientation: landscape) {
-    .mobile-topbar {
-        display: flex;
-    }
-    /* Leave room at the top of the content area for the top bar. */
-    #content {
-        padding-top: 3rem;
+body.mobile-app-shell {
+    @media all and (max-width: 575px), all and (max-width: 950px) and (max-height: 500px) and (orientation: landscape) {
+        .mobile-topbar {
+            display: flex;
+        }
+        .floating-account,
+        .floating-connect {
+            display: block;
+        }
+        /* One reserved strip at the top, whether it holds the landing page's bar or just the
+       floating account button. Without it a tab's title renders underneath that button. */
+        #content {
+            padding-top: calc(3rem + var(--bf-inset-top));
+            /* The status bar floats over the content, so the last row needs somewhere to scroll to. */
+            padding-bottom: calc(5.75rem + var(--bf-inset-bottom));
+        }
     }
 }
 </style>

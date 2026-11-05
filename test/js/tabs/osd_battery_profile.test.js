@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { createPinia, setActivePinia } from "pinia";
 import { OSD } from "../../../src/components/tabs/osd/osd";
-import FC from "../../../src/js/fc";
+import { useFlightControllerStore } from "../../../src/stores/fc";
 import { API_VERSION_1_47, API_VERSION_1_48 } from "../../../src/js/data_storage";
 
 // Stub field: only the name property is needed for chooseFields assertions
@@ -104,6 +105,16 @@ function buildAllDisplayFields() {
         // API 1.48
         "OSD_CUSTOM_SERIAL_TEXT",
         "BATTERY_PROFILE_NAME",
+        "WP_NUMBER",
+        "WP_CURRENT_LAT",
+        "WP_CURRENT_LON",
+        "WP_CURRENT_ALT",
+        "WP_DISTANCE",
+        "WP_DIRECTION",
+        "WP_NEXT_NUMBER",
+        "WP_ETA",
+        "NAV_MAP",
+        "POS_HOLD_READY",
     ];
 
     const fields = {};
@@ -113,9 +124,13 @@ function buildAllDisplayFields() {
     return fields;
 }
 
+let fcStore;
+
 describe("OSD Battery Profile Fields", () => {
     beforeEach(() => {
-        FC.resetState();
+        setActivePinia(createPinia());
+        fcStore = useFlightControllerStore();
+        fcStore.resetState();
         OSD.ALL_DISPLAY_FIELDS = buildAllDisplayFields();
         OSD.constants = OSD.constants || {};
     });
@@ -126,7 +141,7 @@ describe("OSD Battery Profile Fields", () => {
     });
 
     it("includes BATTERY_PROFILE_NAME in DISPLAY_FIELDS for API >= 1.48", () => {
-        FC.CONFIG.apiVersion = API_VERSION_1_48;
+        fcStore.config.apiVersion = API_VERSION_1_48;
         OSD.chooseFields();
 
         const fieldNames = OSD.constants.DISPLAY_FIELDS.map((f) => f.name);
@@ -134,7 +149,7 @@ describe("OSD Battery Profile Fields", () => {
     });
 
     it("OSD_CUSTOM_SERIAL_TEXT appears before BATTERY_PROFILE_NAME in DISPLAY_FIELDS", () => {
-        FC.CONFIG.apiVersion = API_VERSION_1_48;
+        fcStore.config.apiVersion = API_VERSION_1_48;
         OSD.chooseFields();
 
         const fieldNames = OSD.constants.DISPLAY_FIELDS.map((f) => f.name);
@@ -145,7 +160,7 @@ describe("OSD Battery Profile Fields", () => {
     });
 
     it("does not include BATTERY_PROFILE_NAME in DISPLAY_FIELDS for API < 1.48", () => {
-        FC.CONFIG.apiVersion = API_VERSION_1_47;
+        fcStore.config.apiVersion = API_VERSION_1_47;
         OSD.chooseFields();
 
         const fieldNames = OSD.constants.DISPLAY_FIELDS.map((f) => f.name);

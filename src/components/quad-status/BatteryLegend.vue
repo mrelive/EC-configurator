@@ -3,22 +3,19 @@
         {{ reading }}
     </div>
 </template>
-<script setup>
+<script setup lang="ts">
 import { computed } from "vue";
-
-const NO_BATTERY_VOLTAGE_MAXIMUM = 1.8;
+import { NO_BATTERY_VOLTAGE_MAXIMUM, estimateCellCount } from "../../js/utils/battery";
 
 const props = defineProps({
     voltage: { type: Number, default: 0 },
+    cellCount: { type: Number, default: 0 },
     vbatmaxcellvoltage: { type: Number, default: 1 },
     compact: { type: Boolean, default: false },
 });
 
 const reading = computed(() => {
-    let nbCells = Math.floor(props.voltage / props.vbatmaxcellvoltage) + 1;
-    if (props.voltage === 0) {
-        nbCells = 1;
-    }
+    const nbCells = props.cellCount > 0 ? props.cellCount : estimateCellCount(props.voltage, props.vbatmaxcellvoltage);
     const cellsText = props.voltage > NO_BATTERY_VOLTAGE_MAXIMUM ? `${nbCells}S` : "USB";
     return `${props.voltage.toFixed(2)}V (${cellsText})`;
 });
@@ -30,13 +27,13 @@ const reading = computed(() => {
     position: relative;
     top: -2px;
     margin-top: 0;
-    left: 0;
-    right: 0;
+    inset-inline-start: 0;
+    inset-inline-end: 0;
     width: 40px;
-    text-align: left;
+    text-align: start;
     color: var(--surface-800);
-    margin-left: -8px;
-    padding-right: 4px;
+    margin-inline-start: -8px;
+    padding-inline-end: 4px;
 }
 
 .battery-legend--compact {

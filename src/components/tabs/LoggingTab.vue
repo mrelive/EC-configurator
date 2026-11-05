@@ -7,14 +7,14 @@
                 <p v-html="$t('loggingNote')"></p>
             </UiBox>
 
-            <UiBox :title="$t('loggingPropertiesTitle')" class="mt-6">
+            <UiBox :title="$t('loggingPropertiesTitle')" type="neutral" collapsible class="mt-6">
                 <div class="flex flex-col gap-1.5">
                     <div v-for="prop in propertyOptions" :key="prop.code" class="flex items-center gap-3">
                         <USwitch
                             :model-value="selectedProperties.includes(prop.code)"
                             :disabled="isLogging || isBusy"
                             :label="prop.label"
-                            size="sm"
+                            size="xs"
                             class="w-44"
                             @update:model-value="toggleProperty(prop.code, $event)"
                         />
@@ -23,13 +23,13 @@
                 </div>
             </UiBox>
 
-            <SettingRow :label="$t('loggingSamplingInterval')" class="mt-4">
+            <SettingRow :label="$t('loggingSamplingInterval')" fullWidth class="mt-4">
                 <USelect
                     v-model="samplingInterval"
                     :items="speedItems"
                     :disabled="isLogging || isBusy"
                     class="w-28"
-                    size="sm"
+                    size="xs"
                 />
             </SettingRow>
 
@@ -51,6 +51,7 @@
             <UButton
                 :label="$t('loggingButtonLogFile')"
                 :disabled="isLogging || isBusy"
+                size="xs"
                 @click="selectLogFile"
                 variant="soft"
             />
@@ -58,31 +59,30 @@
                 :label="startStopLabel"
                 :disabled="!canToggle"
                 :color="isLogging ? 'error' : selectedProperties.length ? 'success' : 'primary'"
+                size="xs"
                 @click="toggleLogging"
             />
         </div>
     </BaseTab>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import BaseTab from "./BaseTab.vue";
 import UiBox from "@/components/elements/UiBox.vue";
 import SettingRow from "@/components/elements/SettingRow.vue";
 import WikiButton from "@/components/elements/WikiButton.vue";
 import { millitime } from "@/js/utils/common";
-import GUI from "@/js/gui";
 import { generateFilename } from "@/js/utils/generate_filename";
 import { i18n } from "@/js/localization";
 import FileSystem from "@/js/FileSystem";
-import MSP from "@/js/msp";
-import MSPCodes from "@/js/msp/MSPCodes";
 import { useFlightControllerStore } from "@/stores/fc";
 import { useConnectionStore } from "@/stores/connection";
 import { useDialog } from "@/composables/useDialog";
 import { useInterval } from "@/composables/useInterval";
+import { useLoggingData } from "@/composables/logging/useLoggingData";
 
-const PROPERTY_ORDER = [
+const PROPERTY_ORDER: PropertyCode[] = [
     "MSP_RAW_IMU",
     "MSP_ATTITUDE",
     "MSP_ALTITUDE",
@@ -101,17 +101,21 @@ const fcStore = useFlightControllerStore();
 const connectionStore = useConnectionStore();
 const dialog = useDialog();
 const { addInterval, removeInterval } = useInterval();
+const { requestInitialData, requestProperties } = useLoggingData();
 
-const selectedProperties = ref([]);
+type PickedFile = Awaited<ReturnType<typeof FileSystem.pickSaveFile>>;
+type OpenedFile = Awaited<ReturnType<typeof FileSystem.openFile>>;
+
+const selectedProperties = ref<PropertyCode[]>([]);
 const samplingInterval = ref(100);
 const samplesSaved = ref(0);
-const fileEntry = ref(null);
-const fileWriter = ref(null);
+const fileEntry = ref<PickedFile>(null);
+const fileWriter = ref<OpenedFile | null>(null);
 const isLogging = ref(false);
 const isBusy = ref(false);
 
-let logBuffer = [];
-let requestedProperties = [];
+let logBuffer: string[] = [];
+let requestedProperties: PropertyCode[] = [];
 let hasPreviousRequest = false;
 let isDestroyed = false;
 let pendingWrite = Promise.resolve();
@@ -164,8 +168,8 @@ const propertyDefinitions = {
             return [
                 gps.fix ?? 0,
                 gps.numSat ?? 0,
-                (gps.lat ?? 0) / 10000000,
-                (gps.lon ?? 0) / 10000000,
+                (gps.latitude ?? 0) / 10000000,
+                (gps.longitude ?? 0) / 10000000,
                 gps.alt ?? 0,
                 gps.speed ?? 0,
                 gps.ground_course ?? 0,
@@ -226,6 +230,8 @@ const propertyDefinitions = {
     },
 };
 
+type PropertyCode = keyof typeof propertyDefinitions;
+
 const propertyOptions = PROPERTY_ORDER.map((code) => {
     const definition = propertyDefinitions[code];
     return {
@@ -243,7 +249,7 @@ const startStopLabel = computed(() =>
 );
 const canToggle = computed(() => (isLogging.value || !!fileEntry.value) && !isBusy.value);
 
-function toggleProperty(code, enabled) {
+function toggleProperty(code: PropertyCode, enabled: boolean) {
     if (isLogging.value || isBusy.value) {
         return;
     }
@@ -270,6 +276,7 @@ async function selectLogFile() {
             filename,
             i18n.getMessage("fileSystemPickerFiles", { typeof: suffix.toUpperCase() }),
             `.${suffix}`,
+            "telemetry-log-file",
         );
         fileEntry.value = file;
     } catch (error) {
@@ -292,7 +299,7 @@ function buildHeader() {
 }
 
 function crunchData() {
-    const row = [millitime()];
+    const row: (number | string)[] = [millitime()];
 
     requestedProperties.forEach((property) => {
         const definition = propertyDefinitions[property];
@@ -305,20 +312,12 @@ function crunchData() {
     logBuffer.push(row.join(","));
 }
 
-function appendToFile(data) {
+function appendToFile(data: string) {
     if (!fileWriter.value) {
         return Promise.resolve();
     }
 
     return FileSystem.writeChunck(fileWriter.value, new Blob([data], { type: "text/plain" }));
-}
-
-function sendRequests() {
-    requestedProperties.forEach((property) => {
-        if (MSPCodes[property]) {
-            MSP.send_message(MSPCodes[property]);
-        }
-    });
 }
 
 async function writePendingData() {
@@ -419,7 +418,7 @@ async function startLogging() {
                     crunchData();
                 }
 
-                sendRequests();
+                requestProperties(requestedProperties);
                 hasPreviousRequest = true;
             },
             samplingInterval.value,
@@ -466,15 +465,10 @@ async function toggleLogging() {
 
 function sendInitialRequests() {
     if (!connectionStore.connectionValid) {
-        GUI.content_ready();
         return;
     }
 
-    MSP.send_message(MSPCodes.MSP_RC, false, false, () => {
-        MSP.send_message(MSPCodes.MSP_MOTOR, false, false, () => {
-            GUI.content_ready();
-        });
-    });
+    requestInitialData();
 }
 
 onMounted(() => {

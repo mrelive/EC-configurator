@@ -1,6 +1,6 @@
 <template>
-    <UiBox :title="$t('flightPlanMap')" class="flight-plan-map">
-        <div class="map-container">
+    <UiBox :title="$t('flightPlanMap')" type="neutral" collapsible class="flight-plan-map">
+        <div ref="mapContainerRef" class="map-container">
             <div ref="mapRef" class="map"></div>
             <div v-if="isLoading" class="map-loading">
                 <div class="loading-message">
@@ -14,8 +14,11 @@
     </UiBox>
 </template>
 
-<script setup>
-import { ref, watch, onMounted, onUnmounted } from "vue";
+<script setup lang="ts">
+import { ref, watch, onMounted, onUnmounted, type Ref } from "vue";
+import type { Coordinate } from "ol/coordinate";
+import MapBrowserEvent from "ol/MapBrowserEvent";
+import type { Layer } from "ol/layer";
 import UiBox from "@/components/elements/UiBox.vue";
 import { initMap } from "@/js/utils/map";
 import { fromLonLat, toLonLat } from "ol/proj";
@@ -26,6 +29,9 @@ import { Vector as SourceVector } from "ol/source";
 import { Style, Stroke, Circle, Fill, Text } from "ol/style";
 import { DragPan } from "ol/interaction";
 import { useFlightPlan } from "@/composables/useFlightPlan";
+import { useMapViewport } from "@/composables/useMapViewport";
+import { ipCoordinates } from "@/js/utils/ipGeolocation";
+import { getCssVar } from "@/js/utils/cssVar";
 
 const { waypoints, positionalWaypoints, selectedWaypointUid, selectWaypoint, addWaypointAtLocation, updateWaypoint } =
     useFlightPlan();
@@ -34,18 +40,32 @@ const { waypoints, positionalWaypoints, selectedWaypointUid, selectWaypoint, add
 // have no horizontal position and would otherwise be plotted at (0, 0).
 const sortedWaypoints = positionalWaypoints;
 
-const mapRef = ref(null);
-const mapInstance = ref(null);
-const waypointLayer = ref(null);
-const pathLayer = ref(null);
-const draggingWaypointUid = ref(null);
-const dragPanInteraction = ref(null);
+const mapRef = ref<HTMLElement | null>(null);
+const mapContainerRef = ref<HTMLElement | null>(null);
+// The OpenLayers objects below live in deep refs, so they are reached through reactive
+// proxies (consistently: the layers are added to the map through the same proxies). Ref<T>
+// rather than ref<T>()'s inferred type, which unwraps the classes into structural copies
+// that no longer match OpenLayers' own signatures.
+type MapInstance = ReturnType<typeof initMap>;
+const mapInstance = ref(null) as Ref<MapInstance | null>;
+const { observeContainer, teardown: teardownMapViewport } = useMapViewport(
+    mapContainerRef,
+    () => mapInstance.value?.map,
+);
+const waypointLayer = ref(null) as Ref<LayerVector<SourceVector<Feature<Point>>> | null>;
+const pathLayer = ref(null) as Ref<LayerVector<SourceVector> | null>;
+const draggingWaypointUid = ref<string | null>(null);
+const dragPanInteraction = ref(null) as Ref<DragPan | null>;
 const isDragging = ref(false);
-const dragStartCoordinate = ref(null);
+const dragStartCoordinate = ref<Coordinate | null>(null);
 const isLoading = ref(true);
 
 // Helper function to initialize map with given coordinates
-const initializeMapAtLocation = (latitude, longitude, logMessage) => {
+const initializeMapAtLocation = (latitude: number, longitude: number, logMessage: string) => {
+    // Location lookups resolve asynchronously; the tab may have been left by then.
+    if (!mapRef.value) {
+        return;
+    }
     mapInstance.value = initMap({
         target: mapRef.value,
         defaultZoom: 15, // Zoom level 15 shows approximately 1 nautical mile (1852m) in view
@@ -58,87 +78,56 @@ const initializeMapAtLocation = (latitude, longitude, logMessage) => {
     setupMapLayers();
 };
 
-// Fetch location from IP-based geolocation API
-const fetchIPLocation = async () => {
-    try {
-        const response = await fetch("https://get.geojs.io/v1/ip/geo.json");
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const data = await response.json();
-        if (data.latitude && data.longitude) {
-            return {
-                latitude: Number(data.latitude),
-                longitude: Number(data.longitude),
-            };
-        }
-        throw new Error("Invalid response from IP geolocation API");
-    } catch (error) {
-        console.warn("IP geolocation failed:", error.message);
-        return null;
+// Final fallback coordinates (Sydney Harbour Bridge, Australia)
+const FALLBACK_LAT = -33.8523;
+const FALLBACK_LON = 151.2108;
+
+// Browser location was unavailable: try the consent-gated IP lookup, then the fixed fallback.
+const initializeWithoutBrowserLocation = async () => {
+    if (!mapRef.value) {
+        return;
+    }
+    const ipLocation = await ipCoordinates(true);
+    if (ipLocation) {
+        initializeMapAtLocation(ipLocation.lat, ipLocation.lon, "Map initialized at IP-based location");
+    } else {
+        initializeMapAtLocation(FALLBACK_LAT, FALLBACK_LON, "Map initialized at final fallback location");
     }
 };
 
 // Initialize map and layers
-onMounted(async () => {
+onMounted(() => {
     if (!mapRef.value) {
         console.error("Map ref not available");
         return;
     }
 
-    // Final fallback coordinates (Sydney Harbour Bridge, Australia)
-    const finalFallbackLat = -33.8523;
-    const finalFallbackLon = 151.2108;
+    // Attach before the map exists: geolocation makes initialization async, and the
+    // observer only needs the container.
+    observeContainer();
 
-    // Try to get user's geolocation via browser API
-    if (navigator.geolocation) {
-        // prettier-ignore
-        navigator.geolocation.getCurrentPosition( // NOSONAR - user-initiated, required for map centering
-            (position) => {
-                const { latitude, longitude } = position.coords;
-                console.log("Browser geolocation obtained:", latitude, longitude);
-                initializeMapAtLocation(latitude, longitude, "Map initialized at browser location");
-            },
-            async (error) => {
-                console.warn("Browser geolocation failed:", error.message);
-
-                // Fallback to IP-based geolocation
-                const ipLocation = await fetchIPLocation();
-                if (ipLocation) {
-                    console.log("IP geolocation obtained:", ipLocation.latitude, ipLocation.longitude);
-                    initializeMapAtLocation(
-                        ipLocation.latitude,
-                        ipLocation.longitude,
-                        "Map initialized at IP-based location",
-                    );
-                } else {
-                    console.warn("IP geolocation failed, using final fallback");
-                    initializeMapAtLocation(
-                        finalFallbackLat,
-                        finalFallbackLon,
-                        "Map initialized at final fallback location",
-                    );
-                }
-            },
-            {
-                enableHighAccuracy: true,
-                timeout: 5000,
-                maximumAge: 0,
-            },
-        );
-    } else {
+    if (!navigator.geolocation) {
         console.warn("Browser geolocation not supported");
-
-        // Fallback to IP-based geolocation
-        const ipLocation = await fetchIPLocation();
-        if (ipLocation) {
-            console.log("IP geolocation obtained:", ipLocation.latitude, ipLocation.longitude);
-            initializeMapAtLocation(ipLocation.latitude, ipLocation.longitude, "Map initialized at IP-based location");
-        } else {
-            console.warn("IP geolocation failed, using final fallback");
-            initializeMapAtLocation(finalFallbackLat, finalFallbackLon, "Map initialized at final fallback location");
-        }
+        void initializeWithoutBrowserLocation();
+        return;
     }
+
+    // prettier-ignore
+    navigator.geolocation.getCurrentPosition( // NOSONAR - user-initiated, required for map centering
+        (position) => {
+            const { latitude, longitude } = position.coords;
+            initializeMapAtLocation(latitude, longitude, "Map initialized at browser location");
+        },
+        (error) => {
+            console.warn("Browser geolocation failed:", error.message);
+            void initializeWithoutBrowserLocation();
+        },
+        {
+            enableHighAccuracy: true,
+            timeout: 5000,
+            maximumAge: 0,
+        },
+    );
 });
 
 // Setup map layers and event handlers
@@ -147,27 +136,30 @@ const setupMapLayers = () => {
         console.error("Map instance not available");
         return;
     }
+    // Set once by initializeMapAtLocation, never replaced, so the handlers below can hold it.
+    const { map } = mapInstance.value;
+    const isWaypointLayer = (layer: Layer) => layer === waypointLayer.value;
 
     // Create path line layer (magenta line) - add first so it renders behind waypoints
     pathLayer.value = new LayerVector({
         source: new SourceVector(),
         style: new Style({
             stroke: new Stroke({
-                color: "#FF00FF", // Magenta
+                color: getCssVar("--map-route"),
                 width: 3,
             }),
         }),
     });
-    mapInstance.value.map.addLayer(pathLayer.value);
+    map.addLayer(pathLayer.value);
 
     // Create waypoint marker layer with numbered circles - add second so it renders on top
     waypointLayer.value = new LayerVector({
         source: new SourceVector(),
     });
-    mapInstance.value.map.addLayer(waypointLayer.value);
+    map.addLayer(waypointLayer.value);
 
     // Get reference to the default DragPan interaction
-    mapInstance.value.map.getInteractions().forEach((interaction) => {
+    map.getInteractions().forEach((interaction) => {
         if (interaction instanceof DragPan) {
             dragPanInteraction.value = interaction;
         }
@@ -175,9 +167,14 @@ const setupMapLayers = () => {
 
     // Manual drag handling using pointer events
     // Handle pointer down - start dragging
-    mapInstance.value.map.on("pointerdown", (event) => {
-        const feature = mapInstance.value.map.forEachFeatureAtPixel(event.pixel, (feat) => feat, {
-            layerFilter: (layer) => layer === waypointLayer.value,
+    // pointerdown / pointerup are dispatched by the map, but Map.on() does not declare them;
+    // addEventListener is what on() registers through.
+    map.addEventListener("pointerdown", (event) => {
+        if (!(event instanceof MapBrowserEvent)) {
+            return;
+        }
+        const feature = map.forEachFeatureAtPixel(event.pixel, (feat) => feat, {
+            layerFilter: isWaypointLayer,
         });
 
         if (feature) {
@@ -202,35 +199,37 @@ const setupMapLayers = () => {
     });
 
     // Handle pointer move - update waypoint position during drag
-    mapInstance.value.map.on("pointermove", (event) => {
+    map.on("pointermove", (event: MapBrowserEvent) => {
         if (isDragging.value && draggingWaypointUid.value) {
             // Update the feature position in real-time
-            const waypointSource = waypointLayer.value.getSource();
-            const features = waypointSource.getFeatures();
+            const features = waypointLayer.value?.getSource()?.getFeatures() ?? [];
             const feature = features.find((f) => f.get("waypointUid") === draggingWaypointUid.value);
 
             if (feature) {
-                // Update feature geometry
-                feature.getGeometry().setCoordinates(event.coordinate);
+                // Update feature geometry; waypoint markers are always Points.
+                feature.getGeometry()?.setCoordinates(event.coordinate);
 
                 // Update path in real-time
                 updatePathDuringDrag(draggingWaypointUid.value, event.coordinate);
             }
         } else {
             // Update cursor when hovering over waypoints
-            const hit = mapInstance.value.map.hasFeatureAtPixel(event.pixel, {
-                layerFilter: (layer) => layer === waypointLayer.value,
+            const hit = map.hasFeatureAtPixel(event.pixel, {
+                layerFilter: isWaypointLayer,
             });
-            mapInstance.value.map.getTargetElement().style.cursor = hit ? "move" : "";
+            map.getTargetElement().style.cursor = hit ? "move" : "";
         }
     });
 
     // Handle pointer up - end dragging
-    mapInstance.value.map.on("pointerup", (event) => {
-        if (isDragging.value && draggingWaypointUid.value) {
+    map.addEventListener("pointerup", (event) => {
+        if (!(event instanceof MapBrowserEvent)) {
+            return;
+        }
+        if (isDragging.value && draggingWaypointUid.value && dragStartCoordinate.value) {
             // Check if we actually moved (using pixel distance for consistent UI behavior)
-            const startPixel = mapInstance.value.map.getPixelFromCoordinate(dragStartCoordinate.value);
-            const endPixel = mapInstance.value.map.getPixelFromCoordinate(event.coordinate);
+            const startPixel = map.getPixelFromCoordinate(dragStartCoordinate.value);
+            const endPixel = map.getPixelFromCoordinate(event.coordinate);
             const pixelDistance = Math.sqrt(
                 Math.pow(endPixel[0] - startPixel[0], 2) + Math.pow(endPixel[1] - startPixel[1], 2),
             );
@@ -271,10 +270,10 @@ const setupMapLayers = () => {
     });
 
     // Click handler - add new waypoint when clicking on empty map
-    mapInstance.value.map.on("click", (event) => {
+    map.on("click", (event: MapBrowserEvent) => {
         // Check if a waypoint marker was clicked
-        const waypointClicked = mapInstance.value.map.hasFeatureAtPixel(event.pixel, {
-            layerFilter: (layer) => layer === waypointLayer.value,
+        const waypointClicked = map.hasFeatureAtPixel(event.pixel, {
+            layerFilter: isWaypointLayer,
         });
 
         // Only add new waypoint if clicking on empty map (not on a waypoint)
@@ -296,16 +295,16 @@ const setupMapLayers = () => {
 };
 
 // Update path lines during drag in real-time
-const updatePathDuringDrag = (draggingUid, newCoordinates) => {
-    if (!pathLayer.value) {
+const updatePathDuringDrag = (draggingUid: string, newCoordinates: Coordinate) => {
+    const pathSource = pathLayer.value?.getSource();
+    if (!pathSource) {
         return;
     }
 
-    const pathSource = pathLayer.value.getSource();
     pathSource.clear();
 
     // Build coordinates array with the updated position for the dragging waypoint
-    const coordinates = [];
+    const coordinates: Coordinate[] = [];
     sortedWaypoints.value.forEach((wp) => {
         let coord;
         if (wp.uid === draggingUid) {
@@ -329,13 +328,12 @@ const updatePathDuringDrag = (draggingUid, newCoordinates) => {
 
 // Update map features when waypoints change
 const updateMapFeatures = (autoFit = true) => {
-    if (!waypointLayer.value || !pathLayer.value) {
+    const waypointSource = waypointLayer.value?.getSource();
+    const pathSource = pathLayer.value?.getSource();
+    if (!waypointSource || !pathSource || !mapInstance.value) {
         console.log("Layers not ready yet");
         return;
     }
-
-    const waypointSource = waypointLayer.value.getSource();
-    const pathSource = pathLayer.value.getSource();
 
     // Clear existing features
     waypointSource.clear();
@@ -351,7 +349,7 @@ const updateMapFeatures = (autoFit = true) => {
     console.log(`Updating map with ${sorted.length} waypoints`);
 
     // Add markers for each waypoint with order numbers
-    const coordinates = [];
+    const coordinates: Coordinate[] = [];
     sorted.forEach((wp) => {
         const coord = fromLonLat([wp.longitude, wp.latitude]);
         coordinates.push(coord);
@@ -368,18 +366,18 @@ const updateMapFeatures = (autoFit = true) => {
         const isBeingDragged = draggingWaypointUid.value === wp.uid;
 
         // Determine color: green for dragging, orange for selected, blue for normal
-        let fillColor = "#0080FF"; // Blue for normal
+        let fillColor = getCssVar("--map-waypoint");
         let radius = 10;
         let strokeWidth = 2;
         let fontSize = "bold 12px sans-serif";
 
         if (isBeingDragged) {
-            fillColor = "#00FF00"; // Green for dragging
+            fillColor = getCssVar("--map-waypoint-dragging");
             radius = 16;
             strokeWidth = 3;
             fontSize = "bold 14px sans-serif";
         } else if (isSelected) {
-            fillColor = "#FF8C00"; // Orange for selected
+            fillColor = getCssVar("--map-waypoint-selected");
             radius = 14;
             strokeWidth = 3;
             fontSize = "bold 13px sans-serif";
@@ -394,14 +392,14 @@ const updateMapFeatures = (autoFit = true) => {
                         color: fillColor,
                     }),
                     stroke: new Stroke({
-                        color: "#FFFFFF",
+                        color: getCssVar("--map-waypoint-text"),
                         width: strokeWidth,
                     }),
                 }),
                 text: new Text({
                     text: String(wp.order + 1),
                     fill: new Fill({
-                        color: "#FFFFFF",
+                        color: getCssVar("--map-waypoint-text"),
                     }),
                     font: fontSize,
                 }),
@@ -423,6 +421,9 @@ const updateMapFeatures = (autoFit = true) => {
     // Auto-fit map to show all waypoints (only if requested)
     if (autoFit && coordinates.length > 0) {
         const extent = waypointSource.getExtent();
+        if (!extent) {
+            return;
+        }
         mapInstance.value.mapView.fit(extent, {
             padding: [50, 50, 50, 50],
             maxZoom: 15,
@@ -484,75 +485,76 @@ watch(
 // Cleanup on unmount
 onUnmounted(() => {
     console.log("Cleaning up map");
+    teardownMapViewport();
     if (mapInstance.value?.destroy) {
         mapInstance.value.destroy();
     }
 });
 </script>
 
-<style scoped>
+<style lang="less">
 .flight-plan-map {
     display: flex;
     flex-direction: column;
     height: 100%;
-}
 
-.flight-plan-map :deep(> div:last-child) {
-    flex: 1;
-    min-height: 0;
-}
+    & > div:last-child {
+        flex: 1;
+        min-height: 0;
+    }
 
-.map-container {
-    flex: 1;
-    min-height: 480px;
-    border-radius: 4px;
-    overflow: hidden;
-    border: 1px solid var(--surface-500);
-    background: var(--surface-100);
-    position: relative;
-}
-
-.map {
-    width: 100%;
-    height: 100%;
-}
-
-.map-loading {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--surface-100);
-    z-index: 1000;
-}
-
-.loading-message {
-    font-size: 1rem;
-    color: var(--text);
-    font-weight: 500;
-}
-
-.map-instructions {
-    margin-top: 0.5rem;
-    padding: 0.5rem;
-    background: var(--surface-100);
-    border-radius: 4px;
-    font-size: 0.75rem;
-    color: var(--surface-700);
-    text-align: center;
-}
-
-.map-instructions p {
-    margin: 0;
-}
-
-@media (max-width: 1055px) {
     .map-container {
-        min-height: 320px;
+        flex: 1;
+        min-height: 480px;
+        border-radius: 4px;
+        overflow: hidden;
+        border: 1px solid var(--surface-500);
+        background: var(--surface-100);
+        position: relative;
+    }
+
+    .map {
+        width: 100%;
+        height: 100%;
+    }
+
+    .map-loading {
+        position: absolute;
+        top: 0;
+        inset-inline-start: 0;
+        inset-inline-end: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--surface-100);
+        z-index: 1000;
+    }
+
+    .loading-message {
+        font-size: 1rem;
+        color: var(--text);
+        font-weight: 500;
+    }
+
+    .map-instructions {
+        margin-top: 0.5rem;
+        padding: 0.5rem;
+        background: var(--surface-100);
+        border-radius: 4px;
+        font-size: 0.75rem;
+        color: var(--surface-700);
+        text-align: center;
+    }
+
+    .map-instructions p {
+        margin: 0;
+    }
+
+    @media (max-width: 1055px) {
+        .map-container {
+            min-height: 320px;
+        }
     }
 }
 </style>

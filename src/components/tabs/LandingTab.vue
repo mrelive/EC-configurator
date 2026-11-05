@@ -11,20 +11,14 @@
     </BaseTab>
 </template>
 
-<script>
-import { defineComponent, onMounted } from "vue";
+<script lang="ts">
+import { defineComponent } from "vue";
 import BaseTab from "./BaseTab.vue";
-import GUI from "../../js/gui";
 
 export default defineComponent({
     name: "LandingTab",
     components: {
         BaseTab,
-    },
-    setup() {
-        onMounted(() => {
-            GUI.content_ready();
-        });
     },
 });
 </script>

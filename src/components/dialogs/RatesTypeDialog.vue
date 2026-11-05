@@ -1,19 +1,18 @@
 <template>
-    <dialog ref="dialogRef" class="dialogRatesType" @cancel.prevent>
-        <h3 class="dialogRatesTypeTitle">{{ title }}</h3>
-        <div class="dialogRatesTypeContent" v-html="note"></div>
-        <div class="buttons">
-            <button type="button" class="dialogRatesType-confirmbtn regular-button" @click="confirmHandler">
-                {{ confirmText }}
-            </button>
-            <button type="button" class="dialogRatesType-cancelbtn regular-button" @click="cancelHandler">
-                {{ cancelText }}
-            </button>
-        </div>
-    </dialog>
+    <UModal :open="open" :title="title" :close="false" :dismissible="false" class="rates-type-dialog">
+        <template #body>
+            <div class="dialogRatesTypeContent" v-html="note"></div>
+        </template>
+        <template #footer>
+            <div class="flex gap-2 justify-end w-full">
+                <UButton color="neutral" variant="soft" @click="cancelHandler">{{ cancelText }}</UButton>
+                <UButton @click="confirmHandler">{{ confirmText }}</UButton>
+            </div>
+        </template>
+    </UModal>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref } from "vue";
 
 defineProps({
@@ -25,14 +24,14 @@ defineProps({
 
 const emit = defineEmits(["confirm", "cancel"]);
 
-const dialogRef = ref(null);
+const open = ref(false);
 
 const show = () => {
-    dialogRef.value?.showModal();
+    open.value = true;
 };
 
 const close = () => {
-    dialogRef.value?.close();
+    open.value = false;
 };
 
 const confirmHandler = () => {
@@ -48,38 +47,23 @@ const cancelHandler = () => {
 defineExpose({
     show,
     close,
-    dialog: dialogRef,
 });
 </script>
 
-<style scoped>
-.dialogRatesType {
-    width: fit-content;
-    max-width: 400px;
-}
+<style lang="less">
+.rates-type-dialog {
+    .dialogRatesTypeContent {
+        white-space: pre-line;
+    }
 
-.dialogRatesTypeContent {
-    margin-bottom: 12px;
-    margin-top: 12px;
-    white-space: pre-line;
-}
-
-.dialogRatesType-confirmbtn {
-    margin: 0;
-    margin-right: 12px;
-}
-
-.dialogRatesType-cancelbtn {
-    margin: 0;
-}
-
-/* Warning message styling (note uses v-html, so target message-negative) */
-.dialogRatesTypeContent :deep(.message-negative) {
-    display: inline-block;
-    color: var(--danger, #ff6666);
-    background: rgba(255, 0, 0, 0.04);
-    padding: 6px 8px;
-    border-radius: 4px;
-    font-weight: 600;
+    /* Warning message styling (note uses v-html, so target message-negative) */
+    .dialogRatesTypeContent .message-negative {
+        display: inline-block;
+        color: var(--error-500);
+        background: rgba(255, 0, 0, 0.04);
+        padding: 6px 8px;
+        border-radius: 4px;
+        font-weight: 600;
+    }
 }
 </style>

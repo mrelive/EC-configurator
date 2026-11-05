@@ -1,11 +1,19 @@
 <template>
     <Dialog v-model="showEditorDialog" :title="editMode ? $t('flightPlanEditWaypoint') : $t('flightPlanAddWaypoint')">
         <form ref="formElement" class="editor-form flex flex-col gap-3" @submit.prevent="handleSave">
-            <SettingRow :label="$t('flightPlanType')" full-width>
-                <USelect v-model="form.type" :items="typeItems" :aria-label="$t('flightPlanType')" class="w-48" />
+            <SettingRow :label="$t('flightPlanType')" fullWidth>
+                <!-- content z must clear the Dialog overlay/content (z-3000/3001) or the
+                     teleported option list renders behind the modal and can't be clicked. -->
+                <USelect
+                    v-model="form.type"
+                    :items="typeItems"
+                    :aria-label="$t('flightPlanType')"
+                    class="w-48"
+                    :ui="{ content: 'z-3002' }"
+                />
             </SettingRow>
 
-            <SettingRow v-if="showPosition" :label="$t('flightPlanLatitude')" full-width>
+            <SettingRow v-if="showPosition" :label="$t('flightPlanLatitude')" fullWidth>
                 <UInputNumber
                     v-model="form.latitude"
                     :step="0.000001"
@@ -17,7 +25,7 @@
                 />
             </SettingRow>
 
-            <SettingRow v-if="showPosition" :label="$t('flightPlanLongitude')" full-width>
+            <SettingRow v-if="showPosition" :label="$t('flightPlanLongitude')" fullWidth>
                 <UInputNumber
                     v-model="form.longitude"
                     :step="0.000001"
@@ -29,31 +37,31 @@
                 />
             </SettingRow>
 
-            <SettingRow v-if="showAltitude" :label="$t('flightPlanAltitude')" full-width>
+            <SettingRow v-if="showAltitude" :label="altitudeLabel" fullWidth>
                 <UInputNumber
                     v-model="form.altitude"
                     :step="1"
                     :min="0"
-                    :max="50000"
+                    :max="maxAltitude"
                     required
-                    :aria-label="$t('flightPlanAltitude')"
+                    :aria-label="altitudeAriaLabel"
                     class="w-48"
                 />
             </SettingRow>
 
-            <SettingRow v-if="showSpeed" :label="$t('flightPlanSpeed')" full-width>
+            <SettingRow v-if="showSpeed" :label="speedLabel" fullWidth>
                 <UInputNumber
                     v-model="form.speed"
                     :step="0.1"
                     :min="0"
-                    :max="500"
+                    :max="maxSpeed"
                     required
-                    :aria-label="$t('flightPlanSpeed')"
+                    :aria-label="speedAriaLabel"
                     class="w-48"
                 />
             </SettingRow>
 
-            <SettingRow v-if="showYawRate" :label="$t('flightPlanYawRate')" full-width>
+            <SettingRow v-if="showYawRate" :label="$t('flightPlanYawRate')" fullWidth>
                 <UInputNumber
                     v-model="form.speed"
                     :step="1"
@@ -65,7 +73,7 @@
                 />
             </SettingRow>
 
-            <SettingRow v-if="showDuration" :label="durationLabel" full-width>
+            <SettingRow v-if="showDuration" :label="durationLabel" fullWidth>
                 <UInputNumber
                     v-model="form.duration"
                     :step="0.1"
@@ -76,12 +84,13 @@
                 />
             </SettingRow>
 
-            <SettingRow v-if="form.type === 'hold'" :label="$t('flightPlanPattern')" full-width>
+            <SettingRow v-if="form.type === 'hold'" :label="$t('flightPlanPattern')" fullWidth>
                 <USelect
                     v-model="form.pattern"
                     :items="patternItems"
                     :aria-label="$t('flightPlanPattern')"
                     class="w-48"
+                    :ui="{ content: 'z-3002' }"
                 />
             </SettingRow>
         </form>
@@ -99,12 +108,13 @@
     </Dialog>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { reactive, computed, watch, ref } from "vue";
 import { useTranslation } from "i18next-vue";
 import Dialog from "@/components/elements/Dialog.vue";
 import SettingRow from "@/components/elements/SettingRow.vue";
-import { useFlightPlan } from "@/composables/useFlightPlan";
+import { useFlightPlan, type Waypoint } from "@/composables/useFlightPlan";
+import { useFlightPlanUnits } from "@/composables/useFlightPlanUnits";
 
 const { t } = useTranslation();
 const {
@@ -116,23 +126,48 @@ const {
     cancelEdit,
     isModifierWaypointType,
 } = useFlightPlan();
+const { altitudeUnit, speedUnit, altitudeToDisplay, altitudeFromDisplay, speedToDisplay, speedFromDisplay } =
+    useFlightPlanUnits();
+
+// Defaults and limits are defined in feet / knots (the stored units) and shown in the selected unit.
+const DEFAULT_ALTITUDE_FT = 400;
+const DEFAULT_SPEED_KTS = 10;
+const MAX_ALTITUDE_FT = 50000;
+const MAX_SPEED_KTS = 500;
 
 // Form element ref for validation
-const formElement = ref(null);
+const formElement = ref<HTMLFormElement | null>(null);
 
 // Timeout ID for delayed reset to prevent race conditions on quick reopen
-let closeResetTimeoutId = null;
+let closeResetTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+// Form altitude/speed hold display-unit values (yaw_rate keeps deg/s in the speed slot).
+const roundAltitude = (feet: number) => Math.round(altitudeToDisplay(feet));
+const roundSpeed = (knots: number) => Number(speedToDisplay(knots).toFixed(1));
 
 // Form state
 const form = reactive({
     latitude: 0,
     longitude: 0,
-    altitude: 400,
-    speed: 10,
+    altitude: roundAltitude(DEFAULT_ALTITUDE_FT),
+    speed: roundSpeed(DEFAULT_SPEED_KTS),
     type: "flyover",
     duration: 1,
     pattern: "circle",
 });
+
+// The waypoint being edited, as loaded. If the user leaves altitude/speed untouched we save the
+// stored value as-is instead of the rounded display value, so opening and saving never drifts it.
+let loadedWaypoint: Waypoint | null = null;
+
+// Unit strings are fixed literals ("ft", "km/h"…); skip escaping so "km/h" isn't rendered as "km&#x2F;h".
+const withUnit = (key: string, unit: string) => t(key, { unit, interpolation: { escapeValue: false } });
+const altitudeLabel = computed(() => withUnit("flightPlanAltitudeWithUnit", altitudeUnit.value));
+const altitudeAriaLabel = computed(() => withUnit("flightPlanAltitudeAria", altitudeUnit.value));
+const speedLabel = computed(() => withUnit("flightPlanSpeedWithUnit", speedUnit.value));
+const speedAriaLabel = computed(() => withUnit("flightPlanSpeedAria", speedUnit.value));
+const maxAltitude = computed(() => roundAltitude(MAX_ALTITUDE_FT));
+const maxSpeed = computed(() => roundSpeed(MAX_SPEED_KTS));
 
 // Check if we're in edit mode
 const editMode = computed(() => editingWaypointUid.value !== null);
@@ -173,8 +208,9 @@ watch(editingWaypoint, (waypoint) => {
     if (waypoint) {
         form.latitude = Number(waypoint.latitude.toFixed(6));
         form.longitude = Number(waypoint.longitude.toFixed(6));
-        form.altitude = waypoint.altitude;
-        form.speed = waypoint.speed;
+        loadedWaypoint = { ...waypoint };
+        form.altitude = roundAltitude(waypoint.altitude);
+        form.speed = waypoint.type === "yaw_rate" ? waypoint.speed : roundSpeed(waypoint.speed);
         form.type = waypoint.type;
         form.duration = waypoint.duration;
         form.pattern = waypoint.pattern;
@@ -212,13 +248,28 @@ watch(
     },
 );
 
+// Display-unit form values → stored feet / knots.
+const altitudeForSave = () => {
+    if (loadedWaypoint && form.altitude === roundAltitude(loadedWaypoint.altitude)) {
+        return loadedWaypoint.altitude;
+    }
+    return altitudeFromDisplay(form.altitude);
+};
+
+const speedForSave = () => {
+    if (loadedWaypoint && loadedWaypoint.type !== "yaw_rate" && form.speed === roundSpeed(loadedWaypoint.speed)) {
+        return loadedWaypoint.speed;
+    }
+    return speedFromDisplay(form.speed);
+};
+
 // Build a save payload, zeroing slots that aren't meaningful for the type so
 // modifier waypoints don't leak stale form values into CLI/FC round-trips.
 const buildPayload = () => {
     const base = { type: form.type, latitude: 0, longitude: 0, altitude: 0, speed: 0, duration: 0, pattern: "circle" };
     switch (form.type) {
         case "alt_change":
-            return { ...base, altitude: form.altitude };
+            return { ...base, altitude: altitudeForSave() };
         case "delay":
             return { ...base, duration: form.duration };
         case "yaw_rate":
@@ -228,8 +279,8 @@ const buildPayload = () => {
                 ...base,
                 latitude: form.latitude,
                 longitude: form.longitude,
-                altitude: form.altitude,
-                speed: form.speed,
+                altitude: altitudeForSave(),
+                speed: speedForSave(),
                 duration: form.duration,
                 pattern: form.pattern,
             };
@@ -238,8 +289,8 @@ const buildPayload = () => {
                 ...base,
                 latitude: form.latitude,
                 longitude: form.longitude,
-                altitude: form.altitude,
-                speed: form.speed,
+                altitude: altitudeForSave(),
+                speed: speedForSave(),
             };
     }
 };
@@ -248,8 +299,9 @@ const buildPayload = () => {
 const resetForm = () => {
     form.latitude = 0;
     form.longitude = 0;
-    form.altitude = 400;
-    form.speed = 10;
+    loadedWaypoint = null;
+    form.altitude = roundAltitude(DEFAULT_ALTITUDE_FT);
+    form.speed = roundSpeed(DEFAULT_SPEED_KTS);
     form.type = "flyover";
     form.duration = 1;
     form.pattern = "circle";
@@ -282,7 +334,7 @@ const handleCancel = () => {
 };
 </script>
 
-<style scoped>
+<style lang="less">
 .editor-form {
     min-width: 400px;
 }

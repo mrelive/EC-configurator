@@ -18,16 +18,17 @@
                                 <dd class="roll">{{ state.attitude.roll }}</dd>
                             </dl>
                         </div>
-                        <div class="instruments-right">
-                            <span id="attitude"></span>
-                            <span id="heading"></span>
-                        </div>
+                    </div>
+                    <div class="instruments-right">
+                        <span id="attitude"></span>
+                        <span id="heading"></span>
                     </div>
                     <UButton
-                        class="reset-zaxis sm-min"
+                        class="reset-zaxis"
                         :label="$t('initialSetupButtonResetZaxisValue', { 1: yaw_fix })"
                         color="neutral"
                         variant="subtle"
+                        size="xs"
                         @click="resetZaxis"
                     />
                 </div>
@@ -35,7 +36,12 @@
 
             <!-- Info panels in responsive multi-column grid -->
             <div class="setup-info-grid">
-                <UiBox :title="$t('initialSetupInfoHead')" :help="$t('initialSetupInfoHeadHelp')" type="neutral">
+                <UiBox
+                    :title="$t('initialSetupInfoHead')"
+                    :help="$t('initialSetupInfoHeadHelp')"
+                    type="neutral"
+                    collapsible
+                >
                     <InfoGrid
                         :items="[
                             {
@@ -101,7 +107,12 @@
                         </template>
                     </InfoGrid>
                 </UiBox>
-                <UiBox :title="$t('initialSetupGPSHead')" :help="$t('initialSetupGPSHeadHelp')" type="neutral">
+                <UiBox
+                    :title="$t('initialSetupGPSHead')"
+                    :help="$t('initialSetupGPSHeadHelp')"
+                    type="neutral"
+                    collapsible
+                >
                     <InfoGrid
                         :items="[
                             { id: 'gps3dFix', i18n: 'gps3dFix', slotName: 'gps3dFix' },
@@ -123,7 +134,12 @@
                         </template>
                     </InfoGrid>
                 </UiBox>
-                <UiBox :title="$t('initialSetupInfoBuild')" :help="$t('initialSetupInfoFirmwareHelp')" type="neutral">
+                <UiBox
+                    :title="$t('initialSetupInfoBuild')"
+                    :help="$t('initialSetupInfoFirmwareHelp')"
+                    type="neutral"
+                    collapsible
+                >
                     <InfoGrid
                         :items="[
                             {
@@ -205,6 +221,7 @@
                             :label="$t('initialSetupButtonReset')"
                             color="error"
                             class="w-full justify-center"
+                            size="xs"
                             @click="showConfirmReset"
                         >
                             <template #trailing>
@@ -215,6 +232,7 @@
                             :label="$t('initialSetupButtonRebootBootloader')"
                             color="primary"
                             class="w-full justify-center"
+                            size="xs"
                             @click="onRebootBootloader"
                         >
                             <template #trailing>
@@ -229,6 +247,7 @@
                     :title="$t('initialSetupSonarHead')"
                     :help="$t('initialSetupSonarHeadHelp')"
                     type="neutral"
+                    collapsible
                 >
                     <InfoGrid
                         :items="[
@@ -244,39 +263,42 @@
             </div>
         </div>
 
-        <dialog class="dialogConfirmReset" ref="dialogConfirmReset">
-            <h3>{{ $t("dialogConfirmResetTitle") }}</h3>
-            <div class="content">
-                <div style="margin-top: 10px" v-html="$t('dialogConfirmResetNote')"></div>
-            </div>
-            <div class="buttons">
-                <UButton :label="$t('dialogConfirmResetConfirm')" color="error" @click="confirmReset" />
-                <UButton
-                    :label="$t('dialogConfirmResetClose')"
-                    color="neutral"
-                    variant="outline"
-                    @click="cancelConfirmReset"
-                />
-            </div>
-        </dialog>
+        <UModal v-model:open="confirmResetOpen" :title="$t('dialogConfirmResetTitle')">
+            <template #body>
+                <div v-html="$t('dialogConfirmResetNote')"></div>
+            </template>
+            <template #footer>
+                <div class="flex justify-end gap-2 w-full">
+                    <UButton
+                        :label="$t('dialogConfirmResetClose')"
+                        color="neutral"
+                        variant="outline"
+                        size="xs"
+                        @click="cancelConfirmReset"
+                    />
+                    <UButton :label="$t('dialogConfirmResetConfirm')" color="error" size="xs" @click="confirmReset" />
+                </div>
+            </template>
+        </UModal>
 
-        <dialog class="dialogBuildInfo" ref="dialogBuildInfo">
-            <h3>{{ state.buildInfoDialogTitle }}</h3>
-            <div class="contentBuildInfo">
-                <div class="dialogBuildInfoGrid-container" style="margin-top: 10px">
+        <UModal v-model:open="buildInfoOpen" :title="state.buildInfoDialogTitle" :ui="{ content: 'w-fit max-w-2xl' }">
+            <template #body>
+                <div class="dialogBuildInfoGrid-container">
                     <div v-for="option in state.sortedBuildOptions" :key="option" class="dialogBuildInfoGrid-item">
                         {{ option }}
                     </div>
                 </div>
-            </div>
-            <div class="dialogButtons">
-                <UButton :label="$t('close')" color="neutral" variant="outline" @click="closeBuildInfo" />
-            </div>
-        </dialog>
+            </template>
+            <template #footer>
+                <div class="flex justify-end gap-2 w-full">
+                    <UButton :label="$t('close')" color="neutral" variant="outline" size="xs" @click="closeBuildInfo" />
+                </div>
+            </template>
+        </UModal>
     </BaseTab>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref, reactive, watch } from "vue";
 import { useTranslation } from "i18next-vue";
 import { i18n } from "../../js/localization";
@@ -289,24 +311,31 @@ import semver from "semver";
 import { useFlightControllerStore } from "../../stores/fc";
 import { isExpertModeEnabled } from "../../js/utils/isExpertModeEnabled";
 import { EventBus } from "@/components/eventBus";
-import GUI from "../../js/gui";
 import { useInterval } from "../../composables/useInterval";
 import { have_sensor } from "../../js/sensor_helpers";
-import { mspHelper } from "../../js/msp/MSPHelper";
-import MSP from "../../js/msp";
+import { useSetupData } from "../../composables/setup/useSetupData";
 import Model from "../../js/model";
-import MSPCodes from "../../js/msp/MSPCodes";
-import { API_VERSION_1_45, API_VERSION_1_46, API_VERSION_1_47 } from "../../js/data_storage";
+import { API_VERSION_1_45, API_VERSION_1_46, API_VERSION_1_47, API_VERSION_1_48 } from "../../js/data_storage";
 import { gui_log } from "../../js/gui_log";
 import { ispConnected } from "../../js/utils/connection";
 import { addArrayElementsAfter, replaceArrayElement } from "../../js/utils/array";
-import { flightIndicator } from "../../../libraries/flightIndicators";
+import { flightIndicator } from "../../js/flightIndicators";
+import { tabSwitchCleanup } from "../../js/tab_adapters";
 
 const { t } = useTranslation();
 
 const yaw_fix = ref(0);
 
-let modelInstance = null;
+let modelInstance: InstanceType<typeof Model> | null = null;
+// Set by initializeInstruments(), called from the fast data poll.
+let updateInstruments: (() => void) | null = null;
+
+interface BuildInfoButton {
+    type: string;
+    href: string;
+    title: string;
+    label: string;
+}
 // Local reactive state to replace jQuery DOM updates
 const state = reactive({
     batVoltage: "0 V",
@@ -329,16 +358,17 @@ const state = reactive({
     buildDate: "",
     buildType: "",
 
-    attitude: { roll: 0, pitch: 0, heading: 0 },
+    // Numeric until the first read, then the formatted label text.
+    attitude: { roll: 0, pitch: 0, heading: 0 } as Record<"roll" | "pitch" | "heading", number | string>,
     showSonarBox: true,
     buildInfoHtml: "",
-    buildInfoButtons: [],
+    buildInfoButtons: [] as BuildInfoButton[],
     buildOptionsValid: false,
     buildKeyValid: false,
     buildRoot: "",
-    buildOptionsArray: [],
+    buildOptionsArray: [] as string[],
     buildInfoDialogTitle: "",
-    sortedBuildOptions: [],
+    sortedBuildOptions: [] as string[],
 });
 
 const fcStore = useFlightControllerStore();
@@ -383,6 +413,10 @@ const prepareDisarmFlags = function () {
         addArrayElementsAfter(elements, "MOTOR_PROTOCOL", ["CRASHFLIP", "ALTHOLD", "POSHOLD"]);
     }
 
+    if (semver.gte(cfg.apiVersion, API_VERSION_1_48)) {
+        addArrayElementsAfter(elements, "POSHOLD", ["AUTOPILOT"]);
+    }
+
     // Build arming flags state instead of manipulating DOM
     const flags = Array.from({ length: cfg.armingDisableCount }, (_, i) => {
         const isLastBit = i === cfg.armingDisableCount - 1;
@@ -390,7 +424,7 @@ const prepareDisarmFlags = function () {
 
         // 1. Determine the raw name and whether it is a fallback numeric ID
         // We prioritize the "ARM_SWITCH" for the last bit, then known elements, then numeric fallback.
-        let rawName;
+        let rawName: string;
         let isFallback = false;
 
         if (isLastBit) {
@@ -403,7 +437,7 @@ const prepareDisarmFlags = function () {
         }
 
         // 2. Handle display name overrides (e.g., RX_FAILSAFE -> RXLOSS)
-        const nameMap = { RX_FAILSAFE: "RXLOSS", NOT_DISARMED: "BAD_RX_RECOVERY" };
+        const nameMap: Record<string, string | undefined> = { RX_FAILSAFE: "RXLOSS", NOT_DISARMED: "BAD_RX_RECOVERY" };
         const displayName = nameMap[rawName] || rawName;
 
         // 3. Construct tooltip, if it's a fallback, we use the base key; otherwise, we append the rawName.
@@ -447,15 +481,16 @@ if (fcStore.config.armingDisableCount > 0) {
 }
 
 const { addInterval, removeAllIntervals } = useInterval();
+const { loadSetupData, rebootToBootloader, resetSettings, requestAttitude, requestSonar } = useSetupData();
 
-const updateExpertMode = (enabled) => {
+const updateExpertMode = (enabled: boolean) => {
     isExpert.value = enabled;
 };
 
 let mountedFlag = true;
 const isExpert = ref(isExpertModeEnabled());
-const dialogConfirmReset = ref(null);
-const dialogBuildInfo = ref(null);
+const confirmResetOpen = ref(false);
+const buildInfoOpen = ref(false);
 
 function resetZaxis() {
     yaw_fix.value = fcStore.sensorData.kinematics[2] * -1;
@@ -463,32 +498,22 @@ function resetZaxis() {
 }
 
 function onRebootBootloader() {
-    const buffer = [];
-    buffer.push(
-        fcStore.boardHasFlashBootloader() ? mspHelper.REBOOT_TYPES.BOOTLOADER_FLASH : mspHelper.REBOOT_TYPES.BOOTLOADER,
-    );
-    MSP.send_message(MSPCodes.MSP_SET_REBOOT, buffer, false);
+    rebootToBootloader();
 }
 
 function showConfirmReset() {
-    if (dialogConfirmReset.value) {
-        dialogConfirmReset.value.showModal();
-    }
+    confirmResetOpen.value = true;
 }
 
 function cancelConfirmReset() {
-    if (dialogConfirmReset.value) {
-        dialogConfirmReset.value.close();
-    }
+    confirmResetOpen.value = false;
 }
 
 function confirmReset() {
-    if (dialogConfirmReset.value) {
-        dialogConfirmReset.value.close();
-    }
-    MSP.send_message(MSPCodes.MSP_RESET_CONF, false, false, function () {
+    confirmResetOpen.value = false;
+    resetSettings(function () {
         gui_log(t("initialSetupSettingsRestored"));
-        GUI.tab_switch_cleanup(function () {
+        tabSwitchCleanup(function () {
             // Re-initialize the Setup tab component directly (avoid legacy TABS reference)
             initialize();
         });
@@ -496,27 +521,18 @@ function confirmReset() {
 }
 
 function closeBuildInfo() {
-    if (dialogBuildInfo.value) {
-        dialogBuildInfo.value.close();
-    }
+    buildInfoOpen.value = false;
 }
 
 const canvasWrapper = ref(null);
 const canvasEl = ref(null);
-let boundModelResize = null;
+let boundModelResize: (() => void) | null = null;
 
 async function initialize() {
     cleanup();
-    try {
-        await MSP.promise(MSPCodes.MSP_ACC_TRIM, false);
-        await MSP.promise(MSPCodes.MSP_STATUS_EX, false);
-        await MSP.promise(MSPCodes.MSP2_MCU_INFO, false);
-        await MSP.promise(MSPCodes.MSP_MIXER_CONFIG, false);
-        await MSP.promise(MSPCodes.MSP_SENSOR_ALIGNMENT, false);
-        await MSP.promise(MSPCodes.MSP_ADVANCED_CONFIG, false);
-    } catch (e) {
-        // preserve behavior but at least log unexpected errors
-        console.warn("Error during Setup initialize sequence:", e);
+    // false: switching away cancelled the load, so the tab is being torn down and has nothing to render
+    if (!(await loadSetupData())) {
+        return;
     }
 
     // For SFC we don't need to load HTML, just process it
@@ -641,7 +657,7 @@ function process_html() {
         }
 
         if (semver.gte(fcStore.config.apiVersion, API_VERSION_1_47)) {
-            state.mcu = fcStore.mcuInfo.name;
+            state.mcu = String(fcStore.mcuInfo.name);
         } else {
             state.mcu = "";
         }
@@ -653,7 +669,7 @@ function process_html() {
             const pidHz = Math.round(1000000 / cycleTime);
             const pidProcess = fcStore.pidAdvancedConfig?.pid_process_denom || 1;
             const gyroHz = pidHz * pidProcess;
-            const fmt = (hz) => (hz >= 1000 ? `${(hz / 1000).toFixed(0)}k` : `${hz}`);
+            const fmt = (hz: number) => (hz >= 1000 ? `${(hz / 1000).toFixed(1)}k` : `${hz}`);
             state.loopTime = `${fmt(gyroHz)} / ${fmt(pidHz)}`;
         } else {
             state.loopTime = "";
@@ -672,9 +688,9 @@ function process_html() {
     }
 
     function get_fast_data() {
-        MSP.send_message(MSPCodes.MSP_ATTITUDE, false, false, function () {
+        requestAttitude(function () {
             if (mountedFlag) {
-                const formatAttitude = (val) => {
+                const formatAttitude = (val: number) => {
                     const fixed = val.toFixed(1);
                     return Number.parseFloat(fixed) >= 0 ? ` ${fixed}` : fixed;
                 };
@@ -689,13 +705,12 @@ function process_html() {
                 });
 
                 renderModel();
-                // updateInstruments is defined in initializeInstruments
-                globalThis.updateInstruments();
+                updateInstruments?.();
             }
         });
 
         if (have_sensor(fcStore.config.activeSensors, "sonar")) {
-            MSP.send_message(MSPCodes.MSP_SONAR, false, false, function () {
+            requestSonar(function () {
                 if (mountedFlag) {
                     state.sonar = `${fcStore.sensorData.sonar.toFixed(1)} cm`;
                 }
@@ -705,9 +720,6 @@ function process_html() {
 
     addInterval("setup_data_pull_fast", get_fast_data, 33, true);
     addInterval("setup_data_pull_slow", get_slow_data, 250, true);
-
-    // notify GUI that content is ready
-    GUI.content_ready(() => {});
 }
 
 function initializeInstruments() {
@@ -715,8 +727,7 @@ function initializeInstruments() {
     const attitude = flightIndicator("#attitude", "attitude", options);
     const heading = flightIndicator("#heading", "heading", options);
 
-    // expose update function similar to legacy behavior
-    globalThis.updateInstruments = function () {
+    updateInstruments = function () {
         attitude.setRoll(fcStore.sensorData.kinematics[0]);
         attitude.setPitch(fcStore.sensorData.kinematics[1]);
         heading.setHeading(fcStore.sensorData.kinematics[2]);
@@ -746,7 +757,7 @@ function renderModel() {
     modelInstance.rotateTo(x, y, z);
 }
 
-function cleanup(callback) {
+function cleanup(callback?: () => void) {
     if (modelInstance) {
         if (boundModelResize) {
             window.removeEventListener("resize", boundModelResize);
@@ -791,13 +802,11 @@ function openBuildOptionsDialog() {
     );
     state.buildInfoDialogTitle = t("initialSetupInfoBuildOptionList");
 
-    if (dialogBuildInfo.value && !dialogBuildInfo.value.hasAttribute("open")) {
-        dialogBuildInfo.value.showModal();
-    }
+    buildInfoOpen.value = true;
 }
 </script>
 
-<style lang="less" scoped>
+<style lang="less">
 .tab-setup {
     #interactive_block {
         position: relative;
@@ -806,8 +815,8 @@ function openBuildOptionsDialog() {
         border: 2px solid var(--surface-400);
         .reset-zaxis {
             position: absolute;
-            top: 1rem;
-            right: 1rem;
+            top: 0.75rem;
+            inset-inline-end: 0.75rem;
             z-index: 100;
         }
     }
@@ -819,7 +828,7 @@ function openBuildOptionsDialog() {
             height: 100%;
             max-height: 32rem;
             top: 0;
-            left: 0;
+            inset-inline-start: 0;
             border-radius: 1rem;
         }
     }
@@ -842,6 +851,11 @@ function openBuildOptionsDialog() {
         .setup-info-grid {
             grid-template-columns: 1fr;
         }
+        .instruments-right {
+            position: static;
+            justify-content: center;
+            padding: 0.5rem 0 0.75rem;
+        }
     }
     .system_info {
         td {
@@ -849,42 +863,53 @@ function openBuildOptionsDialog() {
             vertical-align: baseline;
         }
     }
-}
-#canvas {
-    width: 100% !important;
-    height: 100% !important;
-}
-.attitude_info {
-    position: absolute;
-    top: 1rem;
-    left: 1rem;
-    margin: 0;
-    font-weight: normal;
-    color: var(--surface-950);
-    dl {
+    #canvas {
+        width: 100% !important;
+        height: 100% !important;
+    }
+    .attitude_info {
+        position: absolute;
+        top: 1rem;
+        inset-inline-start: 1rem;
+        margin: 0;
+        font-weight: normal;
+        color: var(--surface-950);
+        dl {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+        }
+        dd {
+            white-space: pre;
+        }
+    }
+    .instruments-right {
+        position: absolute;
+        bottom: 1rem;
+        inset-inline-end: 1rem;
+        display: flex;
+        flex-direction: row;
+        gap: 0.5rem;
+        pointer-events: none;
+    }
+    .buttons {
+        bottom: 20px;
+    }
+    .disarm-flag {
+        padding-inline-end: 5px;
+        display: inline-block;
+    }
+
+    /* semantic label/value grid used to replace layout tables for accessibility */
+    .cf-info-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
+        gap: 0.25rem 1rem;
+        align-items: baseline;
+        width: 100%;
     }
-    dd {
-        white-space: pre;
-    }
 }
-.instruments-right {
-    position: absolute;
-    bottom: 1rem;
-    right: 1rem;
-    display: flex;
-    flex-direction: row;
-    gap: 0.5rem;
-    pointer-events: none;
-}
-.dialogBuildInfo {
-    transition: all 0.2s;
-    overflow-x: hidden;
-    overflow-y: auto;
-    width: min-content;
-    height: min-content;
-}
+
+/* The build info dialog is teleported out of the tab, so its rules sit outside .tab-setup. */
 .dialogBuildInfoGrid-container {
     display: grid;
     grid-template-columns: auto auto;
@@ -893,30 +918,5 @@ function openBuildOptionsDialog() {
 .dialogBuildInfoGrid-item {
     padding: 5px 5px 3px 5px;
     user-select: text;
-}
-.buttons {
-    bottom: 20px;
-}
-.disarm-flag {
-    padding-right: 5px;
-    display: inline-block;
-}
-
-/* semantic label/value grid used to replace layout tables for accessibility */
-.cf-info-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.25rem 1rem;
-    align-items: baseline;
-    width: 100%;
-}
-.cf-info-grid dt {
-    font-weight: bold;
-    margin: 0;
-}
-.cf-info-grid dd {
-    margin: 0;
-    min-width: 0;
-    overflow-wrap: break-word;
 }
 </style>
